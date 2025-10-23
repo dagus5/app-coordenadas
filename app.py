@@ -9,6 +9,10 @@ st.set_page_config(page_title="Calculadora de Coordenadas", layout="wide")
 st.title("🧭 Calculadora de Coordenadas a 10 km y 50 km")
 st.markdown("Ingresa las coordenadas iniciales y obtén los puntos finales a diferentes acimuts (0°–315°).")
 
+# ---------- SESIÓN PARA MANTENER RESULTADOS ----------
+if "df_resultado" not in st.session_state:
+    st.session_state.df_resultado = None
+
 # Entrada de coordenadas
 col1, col2 = st.columns(2)
 with col1:
@@ -45,10 +49,14 @@ def calcular_puntos(lat_inicial, lon_inicial):
             })
     return pd.DataFrame(resultados)
 
+# ---------- BOTÓN PARA CALCULAR ----------
 if st.button("Calcular coordenadas"):
-    df = calcular_puntos(lat, lon)
+    st.session_state.df_resultado = calcular_puntos(lat, lon)
     st.success("✅ Cálculo completado exitosamente.")
 
+# ---------- MOSTRAR RESULTADO SI EXISTE ----------
+if st.session_state.df_resultado is not None:
+    df = st.session_state.df_resultado
     st.dataframe(df)
 
     # Mapa interactivo
@@ -59,6 +67,8 @@ if st.button("Calcular coordenadas"):
     folium.Marker([lat, lon], tooltip="Punto inicial", icon=folium.Icon(color="red")).add_to(mapa)
     st_folium(mapa, width=700, height=500)
 
-    # Descargar Excel
-    st.download_button("📥 Descargar resultados en Excel", data=df.to_csv(index=False).encode('utf-8'),
-                       file_name="coordenadas_resultado.csv", mime="text/csv")
+    # Descargar CSV
+    st.download_button("📥 Descargar resultados en Excel",
+                       data=df.to_csv(index=False).encode('utf-8'),
+                       file_name="coordenadas_resultado.csv",
+                       mime="text/csv")
