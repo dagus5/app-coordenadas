@@ -10,6 +10,8 @@ st.title("🧭 Calculadora Avanzada de Coordenadas")
 # ---------- SESIÓN PARA MANTENER RESULTADOS ----------
 if "df_resultado" not in st.session_state:
     st.session_state.df_resultado = {}
+if "categoria" not in st.session_state:
+    st.session_state.categoria = "Calculo - 8 Radiales"
 
 # ---------- FUNCIONES ----------
 def decimal_a_gms(grados_decimales, tipo):
@@ -53,10 +55,22 @@ def mostrar_mapa(df, lat, lon):
     folium.Marker([lat, lon], tooltip="Punto inicial", icon=folium.Icon(color="red")).add_to(mapa)
     st_folium(mapa, width=700, height=500)
 
-# ---------- SELECCIÓN DE CATEGORÍA ----------
-categoria = st.selectbox("Selecciona la categoría de cálculo:",
-                         ["Calculo - 8 Radiales", "Calculo por Azimut",
-                          "Calculo de distancia", "Calculo de distancia central"])
+# ---------- BOTONES TIPO MOSAICO ----------
+st.markdown("### Selecciona la categoría de cálculo")
+col1, col2 = st.columns(2)
+col3, col4 = st.columns(2)
+
+if col1.button("📍 Calculo - 8 Radiales"):
+    st.session_state.categoria = "Calculo - 8 Radiales"
+if col2.button("🧭 Calculo por Azimut"):
+    st.session_state.categoria = "Calculo por Azimut"
+if col3.button("📏 Calculo de distancia"):
+    st.session_state.categoria = "Calculo de distancia"
+if col4.button("🗺️ Calculo de distancia central"):
+    st.session_state.categoria = "Calculo de distancia central"
+
+categoria = st.session_state.categoria
+st.markdown(f"### 🟢 Categoría seleccionada: {categoria}")
 
 # ---------- ENTRADA DE COORDENADAS COMÚN ----------
 col1, col2 = st.columns(2)
@@ -101,7 +115,7 @@ elif categoria == "Calculo de distancia":
     with col1:
         lat2_input = st.text_input("Latitud 2 (decimal)", value="8.8066", key="lat2")
     with col2:
-        lon2_input = st.text_input("Longitud 2 (decimal)", value="-82.5403", key="lon2")
+        lon2_input = st.text_input("Longitud 2 (decimal)", value="8.5403", key="lon2")
     if st.button("Calcular distancia y acimut", key="calc_dist"):
         try:
             lat2 = float(lat2_input)
@@ -162,5 +176,4 @@ if categoria in st.session_state.df_resultado:
     # Descargar CSV
     csv_data = df.to_csv(index=False, sep=';', encoding='utf-8')
     st.download_button("📥 Descargar resultados en CSV", data=csv_data, file_name=f"{categoria.replace(' ', '_')}.csv", mime="text/csv")
-
 
