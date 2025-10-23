@@ -15,7 +15,8 @@ if "categoria" not in st.session_state:
 
 # ---------- FUNCIONES ----------
 def decimal_a_gms(grados_decimales, tipo):
-    direccion = {"lat": "N" if grados_decimales >= 0 else "S", "lon": "E" if grados_decimales >= 0 else "W"}[tipo]
+    direccion = {"lat": "N" if grados_decimales >= 0 else "S",
+                 "lon": "E" if grados_decimales >= 0 else "W"}[tipo]
     grados_decimales = abs(grados_decimales)
     grados = int(grados_decimales)
     minutos_decimales = (grados_decimales - grados) * 60
@@ -47,12 +48,31 @@ def calcular_distancia_azimut(lat1, lon1, lat2, lon2):
     acimut_vuelta = punto2.initialBearingTo(punto1)
     return distancia/1000, acimut_ida, acimut_vuelta
 
-def mostrar_mapa(df, lat, lon):
+def mostrar_mapa(df, lat, lon, categoria):
     mapa = folium.Map(location=[lat, lon], zoom_start=9)
-    for _, row in df.iterrows():
-        folium.Marker([float(row["Latitud Final (Decimal)"]), float(row["Longitud Final (Decimal)"])],
-                      tooltip=f"{row.get('Acimut (°)', '')}° - {row.get('Distancia (km)', '')} km").add_to(mapa)
-    folium.Marker([lat, lon], tooltip="Punto inicial", icon=folium.Icon(color="red")).add_to(mapa)
+
+    if categoria in ["Calculo - 8 Radiales", "Calculo por Azimut"]:
+        for _, row in df.iterrows():
+            folium.Marker([float(row["Latitud Final (Decimal)"]),
+                           float(row["Longitud Final (Decimal)"])],
+                          tooltip=f"{row.get('Acimut (°)', '')}° - {row.get('Distancia (km)', '')} km").add_to(mapa)
+        folium.Marker([lat, lon], tooltip="Punto inicial", icon=folium.Icon(color="red")).add_to(mapa)
+
+    elif categoria == "Calculo de distancia":
+        for _, row in df.iterrows():
+            lat2, lon2 = float(row["Latitud 2"]), float(row["Longitud 2"])
+            folium.Marker([lat, lon], tooltip="Punto 1", icon=folium.Icon(color="red")).add_to(mapa)
+            folium.Marker([lat2, lon2], tooltip="Punto 2", icon=folium.Icon(color="blue")).add_to(mapa)
+            folium.PolyLine([[lat, lon], [lat2, lon2]], color="blue", weight=2).add_to(mapa)
+
+    elif categoria == "Calculo de distancia central":
+        for _, row in df.iterrows():
+            lat_c, lon_c = float(row["Latitud central"]), float(row["Longitud central"])
+            lat_p, lon_p = float(row["Latitud punto"]), float(row["Longitud punto"])
+            folium.Marker([lat_c, lon_c], tooltip="Central", icon=folium.Icon(color="red")).add_to(mapa)
+            folium.Marker([lat_p, lon_p], tooltip="Punto", icon=folium.Icon(color="blue")).add_to(mapa)
+            folium.PolyLine([[lat_c, lon_c], [lat_p, lon_p]], color="green", weight=2).add_to(mapa)
+
     st_folium(mapa, width=700, height=500)
 
 # ---------- BOTONES TIPO MOSAICO ----------
@@ -79,7 +99,6 @@ with col1:
 with col2:
     lon_input = st.text_input("Longitud inicial (decimal)", value="-82.5403", key=f"{categoria}_lon")
 
-# Convertir a float
 try:
     lat = float(lat_input)
     lon = float(lon_input)
@@ -87,15 +106,14 @@ except ValueError:
     st.error("Por favor ingresa números válidos para latitud y longitud.")
     st.stop()
 
-# ---------- CATEGORÍA 1: CALCULO - 8 RADIALES ----------
+# ---------- CATEGORÍAS ----------
 if categoria == "Calculo - 8 Radiales":
     acimuts = [0, 45, 90, 135, 180, 225, 270, 315]
-    distancias = [10000, 50000]  # 10 km y 50 km
+    distancias = [10000, 50000]
     if st.button("Calcular coordenadas", key="calc_8rad"):
         st.session_state.df_resultado[categoria] = calcular_puntos(lat, lon, acimuts, distancias)
         st.success("✅ Cálculo completado exitosamente.")
 
-# ---------- CATEGORÍA 2: CALCULO POR AZIMUT ----------
 elif categoria == "Calculo por Azimut":
     acimuts_input = st.text_input("Ingresa acimuts separados por coma (°)", value="0,45,90,135,180,225,270,315")
     dist10 = st.number_input("Distancia 1 (m)", value=10000)
@@ -109,13 +127,12 @@ elif categoria == "Calculo por Azimut":
         except:
             st.error("Error en los acimuts ingresados.")
 
-# ---------- CATEGORÍA 3: CALCULO DE DISTANCIA ENTRE DOS COORDENADAS ----------
 elif categoria == "Calculo de distancia":
     col1, col2 = st.columns(2)
     with col1:
         lat2_input = st.text_input("Latitud 2 (decimal)", value="8.8066", key="lat2")
     with col2:
-        lon2_input = st.text_input("Longitud 2 (decimal)", value="8.5403", key="lon2")
+        lon2_input = st.text_input("Longitud 2 (decimal)", value="-82.5403", key="lon2")
     if st.button("Calcular distancia y acimut", key="calc_dist"):
         try:
             lat2 = float(lat2_input)
@@ -135,9 +152,8 @@ elif categoria == "Calculo de distancia":
         except:
             st.error("Error en las coordenadas ingresadas.")
 
-# ---------- CATEGORÍA 4: CALCULO DE DISTANCIA CENTRAL ----------
 elif categoria == "Calculo de distancia central":
-    num_puntos = st.number_input("Número de coordenadas a calcular desde el punto central", value=2, min_value=1)
+    num_puntos = st.number_input("Número de coordenadas desde el punto central", value=2, min_value=1)
     puntos = []
     for i in range(num_puntos):
         col1, col2 = st.columns(2)
@@ -171,9 +187,19 @@ elif categoria == "Calculo de distancia central":
 if categoria in st.session_state.df_resultado:
     df = st.session_state.df_resultado[categoria]
     st.subheader("Resultados")
-    st.dataframe(df, use_container_width=True)
-    mostrar_mapa(df, lat, lon)
+
+    # Separar por distancia si existe
+    if "Distancia (km)" in df.columns and categoria in ["Calculo - 8 Radiales", "Calculo por Azimut"]:
+        for d in df["Distancia (km)"].unique():
+            st.subheader(f"Resultados a {d} km")
+            st.dataframe(df[df["Distancia (km)"] == d], use_container_width=True)
+    else:
+        st.dataframe(df, use_container_width=True)
+
+    mostrar_mapa(df, lat, lon, categoria)
+
     # Descargar CSV
     csv_data = df.to_csv(index=False, sep=';', encoding='utf-8')
-    st.download_button("📥 Descargar resultados en CSV", data=csv_data, file_name=f"{categoria.replace(' ', '_')}.csv", mime="text/csv")
+    st.download_button("📥 Descargar resultados en CSV", data=csv_data,
+                       file_name=f"{categoria.replace(' ', '_')}.csv", mime="text/csv")
 
