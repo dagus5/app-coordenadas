@@ -5,7 +5,6 @@ import folium
 from streamlit_folium import st_folium
 
 st.set_page_config(page_title="Calculadora de Coordenadas", layout="wide")
-
 st.title("🧭 Calculadora de Coordenadas a 10 km y 50 km")
 st.markdown("Ingresa las coordenadas iniciales y obtén los puntos finales a diferentes acimuts (0°–315°).")
 
@@ -48,7 +47,7 @@ def calcular_puntos(lat_inicial, lon_inicial):
         for acimut in acimuts:
             punto_final = punto_referencia.destination(distancia, acimut)
             resultados.append({
-                "Distancia (km)": distancia/1000,
+                "Distancia (km)": distancia / 1000,
                 "Acimut (°)": acimut,
                 "Latitud Final (Decimal)": f"{punto_final.lat:.10f}",
                 "Longitud Final (Decimal)": f"{punto_final.lon:.10f}",
@@ -86,9 +85,7 @@ if st.session_state.df_resultado is not None:
     folium.Marker([lat, lon], tooltip="Punto inicial", icon=folium.Icon(color="red")).add_to(mapa)
     st_folium(mapa, width=700, height=500)
 
-    # Descargar CSV completo
-    csv_data = df.to_csv(index=False, encoding='utf-8')
-    st.download_button("📥 Descargar resultados en CSV",
-                       data=csv_data,
-                       file_name="coordenadas_resultado.csv",
-                       mime="text/csv")
+    # Descargar CSV completo con separador punto y coma para Excel
+    csv_data = df.to_csv(index=False, sep=';', encoding='utf-8')
+    st.download_button("📥 Descargar resultados en CSV", data=csv_data, file_name="coordenadas_resultado.csv", mime="text/csv")
+
