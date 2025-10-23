@@ -74,23 +74,9 @@ if st.session_state.df_resultado is not None:
     st.subheader("Resultados a 10 km")
     st.dataframe(df_10km, use_container_width=True)
 
-    # Copiar resultados 10 km
-    csv_10km = df_10km.to_csv(index=False)
-    st.markdown(f"""
-    <textarea id="copy_10km" style="width:100%; height:150px;">{csv_10km}</textarea>
-    <button onclick="navigator.clipboard.writeText(document.getElementById('copy_10km').value)">📋 Copiar 10 km</button>
-    """, unsafe_allow_html=True)
-
     # Mostrar tabla 50 km
     st.subheader("Resultados a 50 km")
     st.dataframe(df_50km, use_container_width=True)
-
-    # Copiar resultados 50 km
-    csv_50km = df_50km.to_csv(index=False)
-    st.markdown(f"""
-    <textarea id="copy_50km" style="width:100%; height:150px;">{csv_50km}</textarea>
-    <button onclick="navigator.clipboard.writeText(document.getElementById('copy_50km').value)">📋 Copiar 50 km</button>
-    """, unsafe_allow_html=True)
 
     # Mapa interactivo con todos los puntos
     mapa = folium.Map(location=[lat, lon], zoom_start=9)
@@ -106,4 +92,3 @@ if st.session_state.df_resultado is not None:
                        data=csv_data,
                        file_name="coordenadas_resultado.csv",
                        mime="text/csv")
-
