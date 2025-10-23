@@ -1,91 +1,111 @@
 import streamlit as st
-import pandas as pd
-from pygeodesy.ellipsoidalVincenty import LatLon
-import folium
-from streamlit_folium import st_folium
+import math
 
-st.set_page_config(page_title="Calculadora de Coordenadas", layout="wide")
-st.title("🧭 Calculadora de Coordenadas a 10 km y 50 km")
-st.markdown("Ingresa las coordenadas iniciales y obtén los puntos finales a diferentes acimuts (0°–315°).")
+# Constantes
+R_Tierra = 6371  # Radio de la Tierra en km
 
-# ---------- SESIÓN PARA MANTENER RESULTADOS ----------
-if "df_resultado" not in st.session_state:
-    st.session_state.df_resultado = None
+def grados_a_radianes(grados):
+    return grados * math.pi / 180
 
-# Entrada de coordenadas como texto para preservar decimales
-col1, col2 = st.columns(2)
-with col1:
-    lat_input = st.text_input("Latitud inicial (decimal)", value="8.8066")
-with col2:
-    lon_input = st.text_input("Longitud inicial (decimal)", value="-82.5403")
+def radianes_a_grados(radianes):
+    return radianes * 180 / math.pi
 
-# Convertir a float
-try:
-    lat = float(lat_input)
-    lon = float(lon_input)
-except ValueError:
-    st.error("Por favor ingresa números válidos para latitud y longitud.")
-    st.stop()
+def calcular_nueva_coordenada(lat, lon, azimut, distancia_km):
+    """
+    Calcula nueva coordenada dado punto inicial, azimut (grados) y distancia (km).
+    Fórmula de la esfera (simplificada).
+    """
+    lat_rad = grados_a_radianes(lat)
+    lon_rad = grados_a_radianes(lon)
+    az_rad = grados_a_radianes(azimut)
+    d_div_r = distancia_km / R_Tierra
 
-# Lista de acimuts y distancias
-acimuts = [0, 45, 90, 135, 180, 225, 270, 315]
-distancias = [10000, 50000]  # en metros
+    lat2 = math.asin(math.sin(lat_rad)*math.cos(d_div_r) + math.cos(lat_rad)*math.sin(d_div_r)*math.cos(az_rad))
+    lon2 = lon_rad + math.atan2(math.sin(az_rad)*math.sin(d_div_r)*math.cos(lat_rad),
+                               math.cos(d_div_r)-math.sin(lat_rad)*math.sin(lat2))
 
-def decimal_a_gms(grados_decimales, tipo):
-    direccion = {"lat": "N" if grados_decimales >= 0 else "S", "lon": "E" if grados_decimales >= 0 else "W"}[tipo]
-    grados_decimales = abs(grados_decimales)
-    grados = int(grados_decimales)
-    minutos_decimales = (grados_decimales - grados) * 60
-    minutos = int(minutos_decimales)
-    segundos = (minutos_decimales - minutos) * 60
-    return f"{grados}° {minutos}' {segundos:.8f}\" {direccion}"  # alta precisión
+    return radianes_a_grados(lat2), radianes_a_grados(lon2)
 
-def calcular_puntos(lat_inicial, lon_inicial):
-    punto_referencia = LatLon(lat_inicial, lon_inicial)
-    resultados = []
-    for distancia in distancias:
-        for acimut in acimuts:
-            punto_final = punto_referencia.destination(distancia, acimut)
-            resultados.append({
-                "Distancia (km)": distancia / 1000,
-                "Acimut (°)": acimut,
-                "Latitud Final (Decimal)": f"{punto_final.lat:.10f}",
-                "Longitud Final (Decimal)": f"{punto_final.lon:.10f}",
-                "Latitud (GMS)": decimal_a_gms(punto_final.lat, "lat"),
-                "Longitud (GMS)": decimal_a_gms(punto_final.lon, "lon")
-            })
-    return pd.DataFrame(resultados)
+def calcular_distancia_azimut(lat1, lon1, lat2, lon2):
+    """
+    Calcula distancia (km) y azimut (grados) entre dos coordenadas.
+    Azimut de punto1 a punto2 y viceversa.
+    """
+    lat1_rad = grados_a_radianes(lat1)
+    lat2_rad = grados_a_radianes(lat2)
+    dlon_rad = grados_a_radianes(lon2 - lon1)
 
-# ---------- BOTÓN PARA CALCULAR ----------
-if st.button("Calcular coordenadas"):
-    st.session_state.df_resultado = calcular_puntos(lat, lon)
-    st.success("✅ Cálculo completado exitosamente.")
+    # Distancia con fórmula del haversine
+    dlat = lat2_rad - lat1_rad
+    a = math.sin(dlat/2)**2 + math.cos(lat1_rad)*math.cos(lat2_rad)*math.sin(dlon_rad/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    distancia_km = R_Tierra * c
 
-# ---------- MOSTRAR RESULTADO SI EXISTE ----------
-if st.session_state.df_resultado is not None:
-    df = st.session_state.df_resultado
+    # Azimut de punto1 a punto2
+    y = math.sin(dlon_rad) * math.cos(lat2_rad)
+    x = math.cos(lat1_rad)*math.sin(lat2_rad) - math.sin(lat1_rad)*math.cos(lat2_rad)*math.cos(dlon_rad)
+    azimut_1a2 = (radianes_a_grados(math.atan2(y, x)) + 360) % 360
 
-    # Separar resultados por distancia
-    df_10km = df[df["Distancia (km)"] == 10]
-    df_50km = df[df["Distancia (km)"] == 50]
+    # Azimut de punto2 a punto1
+    y_rev = math.sin(-dlon_rad) * math.cos(lat1_rad)
+    x_rev = math.cos(lat2_rad)*math.sin(lat1_rad) - math.sin(lat2_rad)*math.cos(lat1_rad)*math.cos(-dlon_rad)
+    azimut_2a1 = (radianes_a_grados(math.atan2(y_rev, x_rev)) + 360) % 360
 
-    # Mostrar tabla 10 km
-    st.subheader("Resultados a 10 km")
-    st.dataframe(df_10km, use_container_width=True)
+    return distancia_km, distancia_km*1000, azimut_1a2, azimut_2a1
 
-    # Mostrar tabla 50 km
-    st.subheader("Resultados a 50 km")
-    st.dataframe(df_50km, use_container_width=True)
+# --- Interfaz Streamlit ---
 
-    # Mapa interactivo con todos los puntos
-    mapa = folium.Map(location=[lat, lon], zoom_start=9)
-    for _, row in df.iterrows():
-        folium.Marker([float(row["Latitud Final (Decimal)"]), float(row["Longitud Final (Decimal)"])],
-                      tooltip=f"{row['Acimut (°)']}° - {row['Distancia (km)']} km").add_to(mapa)
-    folium.Marker([lat, lon], tooltip="Punto inicial", icon=folium.Icon(color="red")).add_to(mapa)
-    st_folium(mapa, width=700, height=500)
+st.title("Calculadora Geodésica Multicategoría")
 
-    # Descargar CSV completo con separador punto y coma para Excel
-    csv_data = df.to_csv(index=False, sep=';', encoding='utf-8')
-    st.download_button("📥 Descargar resultados en CSV", data=csv_data, file_name="coordenadas_resultado.csv", mime="text/csv")
+categoria = st.sidebar.selectbox("Elige tipo de cálculo", [
+    "Coordenadas a distancia fija y azimut",
+    "Calcular coordenadas desde azimut(es) y punto central",
+    "Distancia y azimut entre dos coordenadas"
+])
 
+if categoria == "Coordenadas a distancia fija y azimut":
+    st.header("Cálculo de coordenadas a 10 km con azimut fijo")
+    lat = st.number_input("Latitud inicial (grados decimales)", value=0.0, format="%.6f")
+    lon = st.number_input("Longitud inicial (grados decimales)", value=0.0, format="%.6f")
+    distancia_km = 10  # fijo 10 km
+    azimut = st.number_input("Azimut (grados)", min_value=0.0, max_value=360.0, value=0.0, format="%.2f")
+
+    if st.button("Calcular coordenada"):
+        lat_nueva, lon_nueva = calcular_nueva_coordenada(lat, lon, azimut, distancia_km)
+        st.success(f"Coordenada a {distancia_km} km y azimut {azimut}°:")
+        st.write(f"Latitud: {lat_nueva:.6f}°")
+        st.write(f"Longitud: {lon_nueva:.6f}°")
+
+elif categoria == "Calcular coordenadas desde azimut(es) y punto central":
+    st.header("Calcular coordenadas para múltiples azimuts desde punto central")
+    lat_central = st.number_input("Latitud central (grados decimales)", value=0.0, format="%.6f")
+    lon_central = st.number_input("Longitud central (grados decimales)", value=0.0, format="%.6f")
+    distancia_km = st.number_input("Distancia (km)", min_value=0.0, value=10.0, format="%.3f")
+
+    azimuts_str = st.text_area("Introduce azimuts separados por comas (ejemplo: 0,45,90,135)", height=100)
+    if st.button("Calcular coordenadas"):
+        try:
+            azimuts = [float(a.strip()) for a in azimuts_str.split(",") if a.strip() != ""]
+            resultados = []
+            for az in azimuts:
+                lat_n, lon_n = calcular_nueva_coordenada(lat_central, lon_central, az, distancia_km)
+                resultados.append((az, lat_n, lon_n))
+            st.write(f"Coordenadas calculadas a {distancia_km} km desde punto central:")
+            for az, lat_n, lon_n in resultados:
+                st.write(f"Azimut {az:.2f}° → Lat: {lat_n:.6f}°, Lon: {lon_n:.6f}°")
+        except Exception as e:
+            st.error(f"Error en la entrada de azimuts: {e}")
+
+elif categoria == "Distancia y azimut entre dos coordenadas":
+    st.header("Calcular distancia y azimut entre dos puntos")
+    lat1 = st.number_input("Latitud punto 1 (grados decimales)", value=0.0, format="%.6f", key="lat1")
+    lon1 = st.number_input("Longitud punto 1 (grados decimales)", value=0.0, format="%.6f", key="lon1")
+    lat2 = st.number_input("Latitud punto 2 (grados decimales)", value=0.0, format="%.6f", key="lat2")
+    lon2 = st.number_input("Longitud punto 2 (grados decimales)", value=0.0, format="%.6f", key="lon2")
+
+    if st.button("Calcular distancia y azimut"):
+        distancia_km, distancia_m, azimut_1a2, azimut_2a1 = calcular_distancia_azimut(lat1, lon1, lat2, lon2)
+        st.success("Resultados:")
+        st.write(f"Distancia: {distancia_km:.3f} km ({distancia_m:.1f} metros)")
+        st.write(f"Azimut de punto 1 a punto 2: {azimut_1a2:.2f}°")
+        st.write(f"Azimut de punto 2 a punto 1: {azimut_2a1:.2f}°")
