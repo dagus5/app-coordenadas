@@ -7,3 +7,4 @@ streamlit-folium
 openpyxl
 plotly
 srtm.py
+rasterio
