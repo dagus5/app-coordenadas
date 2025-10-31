@@ -1,48 +1,48 @@
 # -*- coding: utf-8 -*-
 # calculadora_deltah_streamlit.py
-# App unificada: Coordenadas (radiales/azimut/distancias) + Δh (ITM) con SRTM / ASTER / Comparar
-# Resultados PERSISTENTES + barra de progreso + descargas CSV/Excel/ZIP + gráfico Plotly
+# App unificada: Coordenadas (radiales/azimut/distancias) + Δh (ITM) estilo MSAM (ASEP Panamá)
+# - Δh: tramo fijo 10–50 km, paso 500 m (80 puntos), Δh = h10 - h90, ΔF = 1.9 - 0.03*Δh*(1 + f/300)
+# - SRTM (srtm.py) online por defecto; fuentes opcionales: ASTER/GTOPO30 por GeoTIFF (rasterio)
+# - Resultados persistentes, gráfico Plotly, mapa Folium, descargas CSV/Excel/ZIP
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import math
 from io import BytesIO
+
 from pygeodesy.ellipsoidalVincenty import LatLon
 import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
 
-# Modelos de elevación
-# - SRTM (srtm.py): funciona offline si ya están los mosaicos en caché local; si no, intenta descargarlos.
-# - ASTER (rasterio): necesitas un GeoTIFF (EPSG:4326) local.
 import srtm
 import rasterio
 
-st.set_page_config(page_title="Coordenadas + Δh (ITM)", layout="wide")
-st.title("🧭 Calculadora Avanzada de Coordenadas + 🌄 Δh (Longley–Rice / ITM)")
+# ---------------------------
+# Configuración básica
+# ---------------------------
+st.set_page_config(page_title="Coordenadas + Δh (ITM/MSAM)", layout="wide")
+st.title("🧭 Calculadora Avanzada de Coordenadas + 🌄 Δh (ITM / MSAM)")
 
 # ---------------------------
-# ESTADO GLOBAL PERSISTENTE
+# Estado persistente
 # ---------------------------
 if "categoria" not in st.session_state:
     st.session_state.categoria = "Cálculo - 8 Radiales"
 
 if "resultados" not in st.session_state:
-    # result set por categoría, ej.: {"Cálculo - 8 Radiales": DataFrame, ...}
-    st.session_state.resultados = {}
+    st.session_state.resultados = {}  # por categoría
 
 if "deltaH_state" not in st.session_state:
-    # Guardamos última corrida de Δh para que NO desaparezca
-    st.session_state.deltaH_state = None  # dict con keys: inputs, df (resumen), perfiles (dict)
+    st.session_state.deltaH_state = None  # dict con inputs, df, profiles
 
 # ---------------------------
-# UTILIDADES GEODÉSICAS
+# Utilidades geodésicas y conversiones
 # ---------------------------
 R_EARTH_M = 6371000.0
 
 def destination_point(lat_deg, lon_deg, bearing_deg, distance_m):
-    """Destino desde (lat,lon) a un azimut y distancia (esfera)."""
     lat1 = math.radians(lat_deg)
     lon1 = math.radians(lon_deg)
     brng = math.radians(bearing_deg)
@@ -73,9 +73,6 @@ def gms_a_decimal(grados:int, minutos:int, segundos:float, direccion:str, tipo:s
     if direccion in ("S","W"): dec = -dec
     return dec
 
-# ---------------------------
-# WIDGET: Entradas de coordenadas
-# ---------------------------
 def input_decimal(label_lat, label_lon, key_prefix):
     c1, c2 = st.columns(2)
     with c1:
@@ -159,14 +156,14 @@ def mostrar_mapa_generico(df, lat, lon, categoria):
             lat2, lon2 = float(r["Latitud 2"]), float(r["Longitud 2"])
             folium.Marker([lat, lon], tooltip="Punto 1", icon=folium.Icon(color="red")).add_to(m)
             folium.Marker([lat2, lon2], tooltip="Punto 2", icon=folium.Icon(color="blue")).add_to(m)
-            folium.PolyLine([[lat, lon],[lat2,lon2]], weight=2).add_to(m)
+            folium.PolyLine([[lat, lon], [lat2, lon2]], weight=2).add_to(m)
     elif categoria == "Cálculo de Distancia Central":
         for _, r in df.iterrows():
             latc, lonc = float(r["Latitud central"]), float(r["Longitud central"])
             latp, lonp = float(r["Latitud punto"]), float(r["Longitud punto"])
             folium.Marker([latc, lonc], tooltip="Central", icon=folium.Icon(color="red")).add_to(m)
             folium.Marker([latp, lonp], tooltip="Punto", icon=folium.Icon(color="blue")).add_to(m)
-            folium.PolyLine([[latc, lonc],[latp,lonp]], color="green", weight=2).add_to(m)
+            folium.PolyLine([[latc, lonc], [latp, lonp]], color="green", weight=2).add_to(m)
     st_folium(m, width=None, height=480)
 
 # ---------------------------
@@ -197,7 +194,7 @@ st.markdown(f"### 🟢 Categoría seleccionada: {categoria}")
 lat, lon = input_coords(key_prefix=f"{categoria}_base")
 
 # ---------------------------
-# CATEGORÍAS
+# CATEGORÍAS DE COORDENADAS
 # ---------------------------
 if categoria == "Cálculo - 8 Radiales":
     acimuts = [0,45,90,135,180,225,270,315]
@@ -241,7 +238,7 @@ elif categoria == "Cálculo de Distancia":
 
 elif categoria == "Cálculo de Distancia Central":
     n = st.number_input("Número de puntos", min_value=1, value=2, step=1)
-    puntos = []
+    filas = []
     for i in range(int(n)):
         modo_i = st.radio(f"Formato Punto {i+1}", ["Decimal","GMS"], horizontal=True, key=f"fmt_central_{i}")
         if modo_i == "Decimal":
@@ -253,52 +250,49 @@ elif categoria == "Cálculo de Distancia Central":
             st.caption(f"Punto {i+1} (GMS): Lat {decimal_a_gms(latpf,'lat')} | Lon {decimal_a_gms(lonpf,'lon')}")
         else:
             latpf, lonpf = input_gms(key_prefix=f"punto{i+1}", defaults=("N","W"))
-        puntos.append((latpf, lonpf))
+        dkm, az12, az21 = calcular_distancia_azimut(lat, lon, latpf, lonpf)
+        filas.append({
+            "Distancia (km)": dkm,
+            "Acimut ida (°)": az12,
+            "Acimut vuelta (°)": az21,
+            "Latitud central": lat, "Longitud central": lon,
+            "Latitud punto": latpf, "Longitud punto": lonpf
+        })
     if st.button("Calcular", key="calc_central"):
-        rows = []
-        for (latp,lonp) in puntos:
-            dkm, az12, az21 = calcular_distancia_azimut(lat, lon, latp, lonp)
-            rows.append({
-                "Distancia (km)": dkm,
-                "Acimut ida (°)": az12,
-                "Acimut vuelta (°)": az21,
-                "Latitud central": lat, "Longitud central": lon,
-                "Latitud punto": latp, "Longitud punto": lonp
-            })
-        st.session_state.resultados[categoria] = pd.DataFrame(rows)
+        st.session_state.resultados[categoria] = pd.DataFrame(filas)
 
 # ---------------------------
-# Δh – Rugosidad (ITM)
+# Δh – Rugosidad (ITM) estilo MSAM
 # ---------------------------
 def deltaF_from_deltaH(delta_h, f_mhz):
-    # Fórmula usada en práctica local (ajustable si tu norma cambia):
-    # ΔF = 1.9 - 0.03*Δh*(1 + f/300)
     return 1.9 - 0.03 * delta_h * (1 + f_mhz/300.0)
 
 @st.cache_resource
 def get_srtm_data():
+    # srtm.py descarga en caché local si hace falta (modo en línea)
     return srtm.get_data()
 
 @st.cache_resource
-def open_aster(path_tif:str):
+def open_raster(path_tif:str):
     try:
         return rasterio.open(path_tif)
     except Exception as e:
-        st.warning(f"No se pudo abrir ASTER GDEM: {e}")
+        st.warning(f"No se pudo abrir GeoTIFF: {e}")
         return None
 
 def elev_srtm(lats, lons):
     data = get_srtm_data()
     return [data.get_elevation(la, lo) for la,lo in zip(lats,lons)]
 
-def elev_aster(ds, lats, lons):
+def elev_raster(ds, lats, lons):
+    """Para ASTER/GTOPO30 en GeoTIFF (EPSG:4326)."""
     if ds is None:
         return [None]*len(lats)
     band1 = ds.read(1)
     vals = []
     for la, lo in zip(lats, lons):
         try:
-            row, col = ds.index(lo, la)  # rasterio index: (lon, lat) -> (row,col)
+            row, col = ds.index(lo, la)  # (lon,lat) -> (row,col)
             v = band1[row, col]
             if ds.nodata is not None and v == ds.nodata:
                 vals.append(None)
@@ -320,32 +314,24 @@ def compute_delta_h(elev_list):
     arr = np.array([e for e in elev_list if e is not None], dtype=float)
     if arr.size == 0:
         return None, None, None
-    # Convención Longley–Rice:
-    # h10 = P90 (terreno alto), h90 = P10 (terreno bajo) -> Δh = h10 - h90
+    # MSAM/ITM: h10 = P90 ; h90 = P10
     h10 = float(np.percentile(arr, 90))
     h90 = float(np.percentile(arr, 10))
     return h10 - h90, h10, h90
 
 if categoria == "Δh – Rugosidad (ITM)":
-    st.markdown("#### Parámetros de cálculo (tramo 10–50 km)")
-    c = st.columns(5)
+    st.markdown("#### Parámetros (ITM estilo MSAM — tramo fijo 10–50 km, paso 500 m)")
+    c = st.columns(4)
     with c[0]: fmhz = st.number_input("Frecuencia (MHz)", value=102.1, step=0.1, format="%.1f")
     with c[1]: az_txt = st.text_input("Azimuts (°) separados por coma", value="0,45,90,135,180,225,270,315")
-    with c[2]: dist_total_km = st.number_input("Distancia total (km)", value=50.0, min_value=10.0, step=1.0, format="%.1f")
-    with c[3]: paso_m = st.number_input("Paso (m)", value=500, min_value=100, max_value=2000, step=50)
-    with c[4]: fuente = st.selectbox("Fuente de elevación", ["SRTM", "ASTER GDEM", "Comparar ambos"])
+    with c[2]: fuente = st.selectbox("Fuente de elevación", ["SRTM (online por defecto)", "ASTER (GeoTIFF)", "GTOPO30 (GeoTIFF)"])
+    with c[3]: aster_path = st.text_input("Ruta GeoTIFF (si usas ASTER/GTOPO30)", value="")
 
-    ds_aster = None
-    if fuente in ("ASTER GDEM", "Comparar ambos"):
-        aster_path = st.text_input("Ruta ASTER GDEM (GeoTIFF EPSG:4326)", value="")
-        if aster_path:
-            ds_aster = open_aster(aster_path)
-
-    # Botón persistente: guardamos estado para que no desaparezca
-    if st.button("Calcular Δh por azimut", key="calc_dh"):
+    # Botón de cálculo con persistencia
+    if st.button("Calcular Δh por azimut (MSAM/ITM)", key="calc_dh_msam"):
         st.session_state.deltaH_state = {"status": "running"}  # marca de ejecución
 
-        # Parseo de azimuts
+        # Parseo azimuts
         try:
             az_list = [float(a.strip()) for a in az_txt.split(",") if a.strip()!=""]
         except:
@@ -353,12 +339,24 @@ if categoria == "Δh – Rugosidad (ITM)":
             st.session_state.deltaH_state = None
             st.stop()
 
-        # Prepara cálculo
-        end_km = min(50.0, float(dist_total_km))
-        results = []
-        profiles = {}  # {az: {"SRTM": df, "ASTER": df}}
+        # Tramo y paso fijos (MSAM): 10–50 km, 500 m
+        start_km, end_km, paso_m = 10.0, 50.0, 500
 
-        # Progreso
+        # Fuente de elevación
+        ds_raster = None
+        use_srtm = (fuente == "SRTM (online por defecto)")
+        if not use_srtm:
+            if aster_path.strip():
+                ds_raster = open_raster(aster_path.strip())
+                if ds_raster is None:
+                    st.info("No se pudo abrir el GeoTIFF. Se usará SRTM automáticamente.")
+                    use_srtm = True
+            else:
+                st.info("No se indicó ruta GeoTIFF. Se usará SRTM automáticamente.")
+                use_srtm = True
+
+        results = []
+        profiles = {}
         prog = st.progress(0)
         n_total = len(az_list)
 
@@ -367,167 +365,128 @@ if categoria == "Δh – Rugosidad (ITM)":
         folium.Marker([lat, lon], tooltip="Transmisor", icon=folium.Icon(color="red")).add_to(fmap)
 
         for i, az in enumerate(az_list, start=1):
-            dists_m, lats, lons = build_profile(lat, lon, az, 10.0, end_km, int(paso_m))
+            dists_m, lats, lons = build_profile(lat, lon, az, start_km, end_km, paso_m)
+            # Elevaciones
+            if use_srtm:
+                elev = elev_srtm(lats, lons)
+            else:
+                elev = elev_raster(ds_raster, lats, lons)
 
+            dh, h10, h90 = compute_delta_h(elev)
             row = {"Azimut (°)": az}
 
-            # SRTM
-            if fuente in ("SRTM", "Comparar ambos"):
-                el_s = elev_srtm(lats, lons)
-                dh_s, h10_s, h90_s = compute_delta_h(el_s)
-                if dh_s is not None:
-                    row["Δh_SRTM (m)"] = round(dh_s, 2)
-                    row["ΔF_SRTM (dB)"] = round(deltaF_from_deltaH(dh_s, fmhz), 2)
-                    profiles.setdefault(az, {})["SRTM"] = pd.DataFrame({
-                        "Distancia (km)": [d/1000 for d in dists_m],
-                        "Elevación (m)": el_s, "Lat": lats, "Lon": lons
-                    })
+            if dh is not None:
+                row["Δh (m)"] = round(dh, 2)
+                row["ΔF (dB)"] = round(deltaF_from_deltaH(dh, fmhz), 2)
+                profiles[az] = pd.DataFrame({
+                    "Distancia (km)": [d/1000 for d in dists_m],
+                    "Elevación (m)": elev, "Lat": lats, "Lon": lons
+                })
 
-            # ASTER
-            if fuente in ("ASTER GDEM", "Comparar ambos"):
-                el_a = elev_aster(ds_aster, lats, lons)
-                if any(e is not None for e in el_a):
-                    dh_a, h10_a, h90_a = compute_delta_h(el_a)
-                    if dh_a is not None:
-                        row["Δh_ASTER (m)"] = round(dh_a, 2)
-                        row["ΔF_ASTER (dB)"] = round(deltaF_from_deltaH(dh_a, fmhz), 2)
-                        profiles.setdefault(az, {})["ASTER"] = pd.DataFrame({
-                            "Distancia (km)": [d/1000 for d in dists_m],
-                            "Elevación (m)": el_a, "Lat": lats, "Lon": lons
-                        })
+            results.append(row)
 
-            # Diferencia si existen ambos
-            if "Δh_SRTM (m)" in row and "Δh_ASTER (m)" in row:
-                row["Δh diferencia (m)"] = round(row["Δh_SRTM (m)"] - row["Δh_ASTER (m)"], 2)
-
-            if len(row) > 1:
-                results.append(row)
-
-            # añadir radial al mapa
+            # Añadir radial al mapa
             folium.PolyLine(list(zip(lats, lons)), weight=3, opacity=0.85).add_to(fmap)
 
             prog.progress(int(i*100/n_total))
 
-        if not results:
-            st.error("No se obtuvieron elevaciones. Verifica la fuente o la ruta ASTER.")
-            st.session_state.deltaH_state = None
-            st.stop()
-
         res_df = pd.DataFrame(results).sort_values("Azimut (°)").reset_index(drop=True)
 
-        # Guardamos estado
         st.session_state.deltaH_state = {
             "status": "done",
-            "inputs": {
-                "fmhz": fmhz, "azimuts": az_list,
-                "end_km": end_km, "paso_m": int(paso_m), "fuente": fuente
-            },
+            "inputs": {"fmhz": fmhz, "azimuts": az_list, "fuente": fuente, "paso_m": paso_m},
             "df": res_df,
-            "profiles": profiles
+            "profiles": profiles,
+            "map_html": None
         }
 
-    # Mostrar ÚLTIMOS RESULTADOS si existen (persistentes)
+    # Mostrar últimos resultados (persistentes)
     if st.session_state.deltaH_state and st.session_state.deltaH_state.get("status") == "done":
         res_df = st.session_state.deltaH_state["df"]
         profiles = st.session_state.deltaH_state["profiles"]
 
-        st.subheader("Resultados por azimut")
+        st.subheader("Resultados por azimut (MSAM/ITM)")
         st.dataframe(res_df, use_container_width=True)
 
-        # Resumen de promedios
-        resumen = {}
-        for cn in ["Δh_SRTM (m)", "ΔF_SRTM (dB)", "Δh_ASTER (m)", "ΔF_ASTER (dB)", "Δh diferencia (m)"]:
-            if cn in res_df.columns:
-                resumen[f"Promedio {cn}"] = round(res_df[cn].mean(), 2)
-        if resumen:
+        # Resumen
+        if "Δh (m)" in res_df.columns:
             st.markdown("**Resumen:**")
-            st.write(resumen)
+            st.write({
+                "Δh (m) promedio": round(res_df["Δh (m)"].mean(), 2),
+                "ΔF (dB) promedio": round(res_df["ΔF (dB)"].mean(), 2)
+            })
 
         # Gráfico de perfil
         az_opts = res_df["Azimut (°)"].tolist()
-        az_sel = st.selectbox("Ver perfil (azimut):", az_opts)
-        fig = go.Figure()
-        if "SRTM" in profiles.get(az_sel, {}):
-            ps = profiles[az_sel]["SRTM"]
-            fig.add_trace(go.Scatter(x=ps["Distancia (km)"], y=ps["Elevación (m)"], mode="lines",
-                                     name=f"SRTM – Az {az_sel}°"))
-        if "ASTER" in profiles.get(az_sel, {}):
-            pa = profiles[az_sel]["ASTER"]
-            fig.add_trace(go.Scatter(x=pa["Distancia (km)"], y=pa["Elevación (m)"], mode="lines",
-                                     name=f"ASTER – Az {az_sel}°"))
-        fig.update_layout(title=f"Perfil de terreno – Azimut {az_sel}°",
-                          xaxis_title="Distancia (km)", yaxis_title="Elevación (m)")
-        st.plotly_chart(fig, use_container_width=True)
+        if len(az_opts) > 0:
+            az_sel = st.selectbox("Ver perfil (azimut):", az_opts)
+            fig = go.Figure()
+            prof = profiles.get(az_sel)
+            if prof is not None:
+                fig.add_trace(go.Scatter(x=prof["Distancia (km)"], y=prof["Elevación (m)"], mode="lines",
+                                         name=f"Perfil – Az {az_sel}°"))
+            fig.update_layout(title=f"Perfil de terreno – Azimut {az_sel}°",
+                              xaxis_title="Distancia (km)", yaxis_title="Elevación (m)")
+            st.plotly_chart(fig, use_container_width=True)
 
-        # Mapa regenerado desde perfiles (para mantener persistencia)
+        # Mapa reconstruido desde perfiles
         m = folium.Map(location=[lat, lon], zoom_start=8, control_scale=True)
         folium.Marker([lat, lon], tooltip="Transmisor", icon=folium.Icon(color="red")).add_to(m)
-        # dibuja líneas con los coords guardados (de algún perfil cualquiera)
-        for az in az_opts:
-            src_pick = "SRTM" if "SRTM" in profiles.get(az, {}) else ("ASTER" if "ASTER" in profiles.get(az, {}) else None)
-            if src_pick is None: 
-                continue
-            path = profiles[az][src_pick]
-            folium.PolyLine(list(zip(path["Lat"], path["Lon"])), weight=3, opacity=0.85).add_to(m)
-        st.subheader("Mapa de radiales")
+        for az, dfp in profiles.items():
+            folium.PolyLine(list(zip(dfp["Lat"], dfp["Lon"])), weight=3, opacity=0.85).add_to(m)
+        st.subheader("Mapa de radiales (10–50 km)")
         st_folium(m, width=None, height=520)
 
-        # Descargas (Resumen y Perfiles)
+        # Descargas
         def df_to_excel_bytes(df):
             from openpyxl import Workbook
             from openpyxl.utils.dataframe import dataframe_to_rows
-            wb = Workbook(); ws = wb.active; ws.title = "DeltaH"
+            wb = Workbook(); ws = wb.active; ws.title = "DeltaH_ITM"
             for r in dataframe_to_rows(df, index=False, header=True):
                 ws.append(r)
-            ws["G1"] = "Δh (ITM/Longley–Rice) = h10 - h90 (P90 - P10), tramo 10–50 km"
+            ws["G1"] = "Δh (ITM/MSAM) = h10 - h90, tramo 10–50 km, paso 500 m (80 puntos)"
             ws["G2"] = "ΔF = 1.9 - 0.03*Δh*(1 + f/300)"
             out = BytesIO(); wb.save(out); return out.getvalue()
 
         st.download_button(
             "⬇️ Descargar CSV (resumen)",
             data=res_df.to_csv(index=False).encode("utf-8"),
-            file_name="deltaH_ITM_resultados.csv",
+            file_name="deltaH_ITM_MSAM_resultados.csv",
             mime="text/csv"
         )
 
         st.download_button(
             "⬇️ Descargar Excel (resumen)",
             data=df_to_excel_bytes(res_df),
-            file_name="deltaH_ITM_resultados.xlsx",
+            file_name="deltaH_ITM_MSAM_resultados.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
         with BytesIO() as zip_buffer:
             import zipfile
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as z:
-                for az, srcs in profiles.items():
-                    for src_name, dfp in srcs.items():
-                        z.writestr(f"perfil_azimut_{az:.1f}_{src_name}.csv", dfp.to_csv(index=False))
+                for az, dfp in profiles.items():
+                    z.writestr(f"perfil_azimut_{az:.1f}_ITM_MSAM.csv", dfp.to_csv(index=False))
             st.download_button(
                 "⬇️ Descargar perfiles (ZIP)",
                 data=zip_buffer.getvalue(),
-                file_name="perfiles_ITM_radiales.zip",
+                file_name="perfiles_ITM_MSAM_radiales.zip",
                 mime="application/zip"
             )
 
 # ---------------------------
-# MOSTRAR RESULTADOS + MAPA para categorías de coordenadas (persistentes)
+# Mostrar resultados persistentes de otras categorías
 # ---------------------------
 if categoria in st.session_state.resultados and categoria != "Δh – Rugosidad (ITM)":
     df = st.session_state.resultados[categoria]
     st.subheader("Resultados")
-    # separar por distancia si aplica
     if "Distancia (km)" in df.columns and categoria in ("Cálculo - 8 Radiales", "Cálculo por Azimut"):
         for d in sorted(df["Distancia (km)"].unique()):
             st.markdown(f"**Resultados a {d} km**")
             st.dataframe(df[df["Distancia (km)"] == d], use_container_width=True)
     else:
         st.dataframe(df, use_container_width=True)
-
-    # mapa
     mostrar_mapa_generico(df, lat, lon, categoria)
-
-    # descarga CSV
     st.download_button(
         "📥 Descargar CSV",
         data=df.to_csv(index=False, sep=';', encoding='utf-8'),
