@@ -1,31 +1,32 @@
 # -*- coding: utf-8 -*-
 # app.py
-# App integrada: Coordenadas + Δh (ITM/MSAM) + HAAT + Predicción ITM (Simplificado)
-# - Δh (ITM): 10–50 km, 500 m, Δh = h10 - h90, ΔF = 1.9 - 0.03*Δh*(1 + f/300)
-# - HAAT: promedio terreno 3–16 km (500 m); HAAT = (elev_sitio + AGL_tx) - promedio_terreno
-# - Predicción ITM Simplificado (estilo MSAM/FCC): Lp, E(dBµV/m) con ΔF y corrección de altura opcional
-# - SRTM (srtm.py) online por defecto; ASTER/GTOPO30 (GeoTIFF EPSG:4326) opcional
-# - Resultados persistentes, mapas Folium, Plotly y descargas
+# App: Coordenadas + Δh (ITM/MSAM), con paso editable, SRTM online (srtm.py) y respaldo Open-Meteo
+# - Δh: tramo 10–50 km, paso configurable (default 500 m), Δh = h10 - h90 (percentiles 90 y 10)
+# - Perfil Plotly y mapa Folium
+# - Entrada Decimal <-> GMS, resultados persistentes, descargas CSV/Excel
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import math
 from io import BytesIO
+import time
 
 from pygeodesy.ellipsoidalVincenty import LatLon
 import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
 
+# Elevaciones
 import srtm
-import rasterio
+import requests
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 
 # ---------------------------
 # Configuración App
 # ---------------------------
-st.set_page_config(page_title="Coordenadas + Δh + HAAT + ITM", layout="wide")
-st.title("🧭 Coordenadas + 🌄 Δh (ITM / MSAM) + 📡 HAAT + 📶 Predicción ITM (Simplificado)")
+st.set_page_config(page_title="Coordenadas + Δh (ITM)", layout="wide")
+st.title("🧭 Coordenadas + 🌄 Δh (ITM / estilo MSAM)")
 
 # ---------------------------
 # Estado persistente
@@ -35,14 +36,10 @@ if "categoria" not in st.session_state:
 if "resultados" not in st.session_state:
     st.session_state.resultados = {}
 if "deltaH_state" not in st.session_state:
-    st.session_state.deltaH_state = None
-if "haat_state" not in st.session_state:
-    st.session_state.haat_state = None
-if "itm_state" not in st.session_state:
-    st.session_state.itm_state = None
+    st.session_state.deltaH_state = None  # dict: inputs, df, profiles
 
 # ---------------------------
-# Utilidades geodésicas / conversión
+# Geodesia / conversiones
 # ---------------------------
 R_EARTH_M = 6371000.0
 
@@ -121,46 +118,69 @@ def input_coords(key_prefix="base"):
     return input_gms(key_prefix)
 
 # ---------------------------
-# DEM / Elevaciones
+# Elevaciones (SRTM + respaldo Open-Meteo)
 # ---------------------------
 @st.cache_resource
 def get_srtm_data():
-    return srtm.get_data()  # descarga/caché automática (en línea por defecto)
-
-@st.cache_resource
-def open_raster(path_tif:str):
-    try:
-        return rasterio.open(path_tif)
-    except Exception as e:
-        st.warning(f"No se pudo abrir GeoTIFF: {e}")
-        return None
+    return srtm.get_data()  # SRTM1 (~30 m) donde disponible, SRTM3 (~90 m) como fallback
 
 def elev_srtm(lats, lons):
     data = get_srtm_data()
     return [data.get_elevation(la, lo) for la,lo in zip(lats,lons)]
 
-def elev_raster(ds, lats, lons):
-    if ds is None:
-        return [None]*len(lats)
-    band1 = ds.read(1)
-    vals = []
-    for la, lo in zip(lats, lons):
-        try:
-            row, col = ds.index(lo, la)  # (lon,lat) -> (row,col)
-            v = band1[row, col]
-            if ds.nodata is not None and v == ds.nodata:
-                vals.append(None)
-            else:
-                vals.append(float(v))
-        except Exception:
-            vals.append(None)
-    return vals
+class Elevation429(Exception):
+    pass
 
-def get_site_elevation(lat, lon, use_srtm=True, ds_raster=None):
-    return (elev_srtm([lat], [lon])[0] if use_srtm else elev_raster(ds_raster, [lat], [lon])[0])
+@retry(wait=wait_exponential(multiplier=0.8, min=0.5, max=8), stop=stop_after_attempt(5),
+       retry=retry_if_exception_type(Elevation429))
+def _open_meteo_chunk(lat_list, lon_list):
+    # Open-Meteo permite múltiples puntos en 'latitude' y 'longitude' separados por coma
+    base = "https://api.open-meteo.com/v1/elevation"
+    params = {
+        "latitude": ",".join([f"{x:.6f}" for x in lat_list]),
+        "longitude": ",".join([f"{x:.6f}" for x in lon_list]),
+    }
+    r = requests.get(base, params=params, timeout=15)
+    if r.status_code == 429:
+        raise Elevation429("Too Many Requests (Open-Meteo)")
+    r.raise_for_status()
+    data = r.json()
+    vals = data.get("elevation", [])
+    # Open-Meteo devuelve dict con claves 'elevation', 'latitude', 'longitude' en arrays paralelos (orden conservado)
+    return [float(v) if v is not None else None for v in vals]
+
+def elev_open_meteo(lats, lons, chunk_size=90, sleep_s=0.25):
+    out = []
+    n = len(lats)
+    for i in range(0, n, chunk_size):
+        la_chunk = lats[i:i+chunk_size]
+        lo_chunk = lons[i:i+chunk_size]
+        vals = _open_meteo_chunk(la_chunk, lo_chunk)
+        out.extend(vals)
+        time.sleep(sleep_s)  # pequeña pausa para evitar 429
+    return out
+
+def get_elevations(lats, lons, provider="SRTM_then_OpenMeteo"):
+    """Intenta SRTM; si hay None o falla, completa con Open-Meteo para esas posiciones."""
+    elev_primary = elev_srtm(lats, lons)
+    if provider == "SRTM_then_OpenMeteo":
+        # Si alguna elevación viene None, completamos con Open-Meteo
+        if any(v is None for v in elev_primary):
+            idx_missing = [i for i,v in enumerate(elev_primary) if v is None]
+            if idx_missing:
+                la_miss = [lats[i] for i in idx_missing]
+                lo_miss = [lons[i] for i in idx_missing]
+                try:
+                    repl = elev_open_meteo(la_miss, lo_miss)
+                    for k, i in enumerate(idx_missing):
+                        elev_primary[i] = repl[k]
+                except Exception as e:
+                    # Si fallara Open-Meteo, dejamos None
+                    pass
+    return elev_primary
 
 # ---------------------------
-# Cálculos de perfiles y métricas
+# Cálculos comunes
 # ---------------------------
 def calcular_puntos(lat, lon, acimuts, distancias_m):
     base = LatLon(lat, lon)
@@ -200,26 +220,13 @@ def compute_delta_h(elev_list):
     h90 = float(np.percentile(arr, 10))  # P10
     return h10 - h90, h10, h90
 
-def avg_terrain(elev_list):
-    arr = np.array([e for e in elev_list if e is not None], dtype=float)
-    if arr.size == 0:
-        return None
-    return float(np.mean(arr))
-
-def deltaF_from_deltaH(delta_h, f_mhz):
-    return 1.9 - 0.03 * delta_h * (1 + f_mhz/300.0)
-
-# Heurística de ganancia por altura (ligera, estilo práctico)
-def height_gain_db(haat_m, h_rx_m):
-    gh_tx = 0.0 if haat_m is None else 20.0 * math.log10(max(1.0, haat_m/30.0))
-    gh_rx = 10.0 * math.log10(max(1.0, h_rx_m/10.0))
-    return gh_tx + gh_rx
-
 # ---------------------------
-# Panel de categorías
+# Mosaico de categorías
 # ---------------------------
 st.markdown("### Selecciona la categoría de cálculo")
-c1, c2 = st.columns(2); c3, c4 = st.columns(2); c5, c6 = st.columns(2); c7, _ = st.columns(2)
+c1, c2 = st.columns(2)
+c3, c4 = st.columns(2)
+c5, _ = st.columns(2)
 
 if c1.button("📍 Cálculo - 8 Radiales"):
     st.session_state.categoria = "Cálculo - 8 Radiales"
@@ -231,10 +238,6 @@ if c4.button("🗺️ Cálculo de Distancia Central"):
     st.session_state.categoria = "Cálculo de Distancia Central"
 if c5.button("🌄 Δh – Rugosidad (ITM)"):
     st.session_state.categoria = "Δh – Rugosidad (ITM)"
-if c6.button("📡 Altura efectiva (HAAT)"):
-    st.session_state.categoria = "Altura efectiva (HAAT)"
-if c7.button("📶 Predicción ITM (Simplificado)"):
-    st.session_state.categoria = "Predicción ITM (Simplificado)"
 
 categoria = st.session_state.categoria
 st.markdown(f"### 🟢 Categoría seleccionada: {categoria}")
@@ -245,7 +248,7 @@ st.markdown(f"### 🟢 Categoría seleccionada: {categoria}")
 lat, lon = input_coords(key_prefix=f"{categoria}_base")
 
 # ---------------------------
-# Mapa genérico
+# Pestañas estándar
 # ---------------------------
 def mostrar_mapa_generico(df, lat, lon, categoria):
     m = folium.Map(location=[lat, lon], zoom_start=9, control_scale=True)
@@ -270,9 +273,6 @@ def mostrar_mapa_generico(df, lat, lon, categoria):
             folium.PolyLine([[latc, lonc], [latp, lonp]], color="green", weight=2).add_to(m)
     st_folium(m, width=None, height=480)
 
-# ---------------------------
-# Pestañas de coordenadas estándar
-# ---------------------------
 if categoria == "Cálculo - 8 Radiales":
     acimuts = [0,45,90,135,180,225,270,315]
     dist_m = [10000, 50000]
@@ -339,54 +339,43 @@ elif categoria == "Cálculo de Distancia Central":
         st.session_state.resultados[categoria] = pd.DataFrame(filas)
 
 # ---------------------------
-# Δh – Rugosidad (ITM) (MSAM)
+# 🌄 Δh – Rugosidad (ITM estilo MSAM)
 # ---------------------------
 if categoria == "Δh – Rugosidad (ITM)":
-    st.markdown("#### Parámetros Δh (ITM/MSAM) — 10–50 km, paso 500 m")
+    st.markdown("#### Parámetros Δh (ITM/MSAM)")
     c = st.columns(5)
-    with c[0]: fmhz = st.number_input("Frecuencia (MHz)", value=102.1, step=0.1, format="%.1f")
-    with c[1]: az_txt = st.text_input("Azimuts (°) separados por coma", value="0,45,90,135,180,225,270,315")
-    with c[2]: fuente = st.selectbox("Fuente elevación", ["SRTM (online por defecto)", "ASTER (GeoTIFF)", "GTOPO30 (GeoTIFF)"])
-    with c[3]: aster_path = st.text_input("Ruta GeoTIFF (si ASTER/GTOPO30)", value="")
-    with c[4]: ant_agl = st.number_input("Altura antena AGL (m) (para AMSL/HAAT)", value=50.0, min_value=0.0, step=1.0)
+    with c[0]:
+        az_txt = st.text_input("Azimuts (°) separados por coma", value="0,45,90,135,180,225,270,315")
+    with c[1]:
+        paso_m = st.number_input("Paso entre puntos (m)", value=500, min_value=100, step=100,
+                                 help="Default 500 m (MSAM). Puedes usar 100–1000 m.")
+    with c[2]:
+        st.caption("Tramo **fijo**: 10–50 km (ITM/MSAM)")
+    with c[3]:
+        fuente_info = st.selectbox("Proveedor", ["SRTM (≈30 m si disponible) + Open-Meteo (respaldo)"])
+    with c[4]:
+        st.caption("SRTM intenta 30 m; si no, ~90 m. Respaldo: Open-Meteo.")
 
-    if st.button("Calcular Δh (MSAM/ITM)", key="calc_dh_msam"):
+    if st.button("Calcular Δh", key="calc_dh_btn"):
         st.session_state.deltaH_state = {"status": "running"}
         try:
             az_list = [float(a.strip()) for a in az_txt.split(",") if a.strip()!=""]
         except:
             st.error("Revisa la lista de azimuts."); st.session_state.deltaH_state=None; st.stop()
 
-        start_km, end_km, paso_m = 10.0, 50.0, 500
-        ds_raster = None
-        use_srtm = (fuente.startswith("SRTM"))
-        if not use_srtm:
-            if aster_path.strip():
-                ds_raster = open_raster(aster_path.strip())
-                if ds_raster is None:
-                    st.info("No se pudo abrir el GeoTIFF. Se usará SRTM.")
-                    use_srtm = True
-            else:
-                st.info("No se indicó ruta GeoTIFF. Se usará SRTM.")
-                use_srtm = True
-
-        elev_site = get_site_elevation(lat, lon, use_srtm, ds_raster)
-        ant_amsl = (elev_site if elev_site is not None else 0.0) + ant_agl
-
+        start_km, end_km = 10.0, 50.0
         results = []; profiles = {}
         prog = st.progress(0); total = len(az_list)
 
         for i, az in enumerate(az_list, start=1):
             dists_m, lats, lons = build_profile(lat, lon, az, start_km, end_km, paso_m)
-            elev = elev_srtm(lats, lons) if use_srtm else elev_raster(ds_raster, lats, lons)
+            elev = get_elevations(lats, lons, provider="SRTM_then_OpenMeteo")
             dh, h10, h90 = compute_delta_h(elev)
             row = {"Azimut (°)": az}
             if dh is not None:
                 row["Δh (m)"] = round(dh, 2)
-                row["ΔF (dB)"] = round(deltaF_from_deltaH(dh, fmhz), 2)
-                row["Elevación sitio (m)"] = elev_site
-                row["Antena AGL (m)"] = ant_agl
-                row["Antena AMSL (m)"] = ant_amsl
+                row["h10 (m, P90)"] = round(h10, 2)
+                row["h90 (m, P10)"] = round(h90, 2)
                 profiles[az] = pd.DataFrame({
                     "Distancia (km)": [d/1000 for d in dists_m],
                     "Elevación (m)": elev, "Lat": lats, "Lon": lons
@@ -397,17 +386,19 @@ if categoria == "Δh – Rugosidad (ITM)":
         res_df = pd.DataFrame(results).sort_values("Azimut (°)").reset_index(drop=True)
         st.session_state.deltaH_state = {
             "status": "done",
-            "inputs": {"fmhz": fmhz, "azimuts": az_list, "fuente": fuente, "paso_m": paso_m, "AGL": ant_agl},
+            "inputs": {"azimuts": az_list, "paso_m": paso_m, "tramo_km": (start_km, end_km)},
             "df": res_df,
             "profiles": profiles
         }
 
+    # Mostrar resultados persistentes Δh
     if st.session_state.deltaH_state and st.session_state.deltaH_state.get("status") == "done":
         res_df = st.session_state.deltaH_state["df"]; profiles = st.session_state.deltaH_state["profiles"]
-        st.subheader("Resultados Δh (MSAM/ITM) + alturas del sitio")
+
+        st.subheader("Resultados Δh por azimut (ITM/MSAM)")
         st.dataframe(res_df, use_container_width=True)
 
-        # Perfil
+        # Selector de perfil
         az_opts = res_df["Azimut (°)"].tolist()
         if az_opts:
             az_sel = st.selectbox("Ver perfil (azimut):", az_opts)
@@ -416,248 +407,37 @@ if categoria == "Δh – Rugosidad (ITM)":
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=prof["Distancia (km)"], y=prof["Elevación (m)"], mode="lines",
                                          name=f"Perfil – Az {az_sel}°"))
-                fig.update_layout(title=f"Perfil 10–50 km – Az {az_sel}°", xaxis_title="Distancia (km)", yaxis_title="Elevación (m)")
+                fig.update_layout(title=f"Perfil de terreno – Azimut {az_sel}° (10–50 km, paso {st.session_state.deltaH_state['inputs']['paso_m']} m)",
+                                  xaxis_title="Distancia (km)", yaxis_title="Elevación (m)")
                 st.plotly_chart(fig, use_container_width=True)
+
+        # Mapa de radiales
+        m = folium.Map(location=[lat, lon], zoom_start=8, control_scale=True)
+        folium.Marker([lat, lon], tooltip="Transmisor", icon=folium.Icon(color="red")).add_to(m)
+        for az, dfp in profiles.items():
+            folium.PolyLine(list(zip(dfp["Lat"], dfp["Lon"])), weight=3, opacity=0.85).add_to(m)
+        st.subheader("Mapa de radiales (10–50 km)")
+        st_folium(m, width=None, height=520)
 
         # Descargas
         def df_to_excel_bytes(df, sheet="DeltaH_ITM"):
             from openpyxl import Workbook
             from openpyxl.utils.dataframe import dataframe_to_rows
             wb = Workbook(); ws = wb.active; ws.title = sheet
-            for r in dataframe_to_rows(df, index=False, header=True):
-                ws.append(r)
-            ws["I1"] = "Δh = h10 - h90 (10–50 km, 500 m); ΔF = 1.9 - 0.03*Δh*(1 + f/300)"
-            out = BytesIO(); wb.save(out); return out.getvalue()
-
-        st.download_button("⬇️ CSV (Δh + alturas)", data=res_df.to_csv(index=False).encode("utf-8"),
-                           file_name="deltaH_ITM_con_alturas.csv", mime="text/csv")
-        st.download_button("⬇️ Excel (Δh + alturas)", data=df_to_excel_bytes(res_df),
-                           file_name="deltaH_ITM_con_alturas.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-# ---------------------------
-# 📡 Altura efectiva (HAAT)
-# ---------------------------
-if categoria == "Altura efectiva (HAAT)":
-    st.markdown("#### Parámetros HAAT — promedio terreno 3–16 km (paso 500 m)")
-    c = st.columns(5)
-    with c[0]: az_txt_h = st.text_input("Azimuts (°) separados por coma", value="0,45,90,135,180,225,270,315")
-    with c[1]: fuente_h = st.selectbox("Fuente elevación", ["SRTM (online por defecto)", "ASTER (GeoTIFF)", "GTOPO30 (GeoTIFF)"], key="fuente_haat")
-    with c[2]: aster_path_h = st.text_input("Ruta GeoTIFF (si ASTER/GTOPO30)", value="", key="tif_haat")
-    with c[3]: ant_agl_h = st.number_input("Altura antena AGL (m)", value=50.0, min_value=0.0, step=1.0, key="agl_haat")
-    with c[4]: incluir_perfil = st.checkbox("Exportar perfiles 3–16 km", value=True)
-
-    if st.button("Calcular HAAT por azimut", key="calc_haat_btn"):
-        st.session_state.haat_state = {"status": "running"}
-        try:
-            az_list_h = [float(a.strip()) for a in az_txt_h.split(",") if a.strip()!=""]
-        except:
-            st.error("Revisa la lista de azimuts."); st.session_state.haat_state=None; st.stop()
-
-        start_km, end_km, paso_m = 3.0, 16.0, 500
-        ds_raster = None
-        use_srtm = (fuente_h.startswith("SRTM"))
-        if not use_srtm:
-            if aster_path_h.strip():
-                ds_raster = open_raster(aster_path_h.strip())
-                if ds_raster is None:
-                    st.info("No se pudo abrir el GeoTIFF. Se usará SRTM.")
-                    use_srtm = True
-            else:
-                st.info("No se indicó ruta GeoTIFF. Se usará SRTM.")
-                use_srtm = True
-
-        elev_site = get_site_elevation(lat, lon, use_srtm, ds_raster)
-        ant_amsl = (elev_site if elev_site is not None else 0.0) + ant_agl_h
-
-        results = []; profiles = {}
-        prog = st.progress(0); total = len(az_list_h)
-
-        for i, az in enumerate(az_list_h, start=1):
-            dists_m, lats, lons = build_profile(lat, lon, az, start_km, end_km, paso_m)
-            elev = elev_srtm(lats, lons) if use_srtm else elev_raster(ds_raster, lats, lons)
-            avg_terr = avg_terrain(elev)
-            row = {"Azimut (°)": az, "Elevación sitio (m)": elev_site, "Antena AGL (m)": ant_agl_h, "Antena AMSL (m)": ant_amsl}
-            if avg_terr is not None:
-                row["Promedio terreno 3–16 km (m)"] = round(avg_terr,2)
-                row["HAAT (m)"] = round(ant_amsl - avg_terr, 2)
-            results.append(row)
-
-            if incluir_perfil:
-                profiles[az] = pd.DataFrame({
-                    "Distancia (km)": [d/1000 for d in dists_m],
-                    "Elevación (m)": elev, "Lat": lats, "Lon": lons
-                })
-            prog.progress(int(i*100/total))
-
-        res_df = pd.DataFrame(results).sort_values("Azimut (°)").reset_index(drop=True)
-        st.session_state.haat_state = {"status":"done","df":res_df,"profiles":profiles}
-
-    if st.session_state.haat_state and st.session_state.haat_state.get("status") == "done":
-        res_df = st.session_state.haat_state["df"]; profiles = st.session_state.haat_state["profiles"]
-        st.subheader("Resultados HAAT por azimut")
-        st.dataframe(res_df, use_container_width=True)
-
-        if "HAAT (m)" in res_df.columns and not res_df["HAAT (m)"].dropna().empty:
-            st.markdown("**Resumen:**")
-            st.write({
-                "HAAT (m) promedio": round(res_df["HAAT (m)"].dropna().mean(), 2),
-                "Terreno 3–16 km promedio (m)": round(res_df["Promedio terreno 3–16 km (m)"].dropna().mean(), 2) if "Promedio terreno 3–16 km (m)" in res_df.columns else None
-            })
-
-        # Descargas
-        def df_to_excel_bytes(df, sheet="HAAT"):
-            from openpyxl import Workbook
-            from openpyxl.utils.dataframe import dataframe_to_rows
-            wb = Workbook(); ws = wb.active; ws.title = sheet
             for r in dataframe_to_rows(df, index=False, header=True): ws.append(r)
-            ws["I1"] = "HAAT = (Elevación sitio + AGL_tx) - promedio terreno 3–16 km"
+            ws["G1"] = "Δh = h10 - h90 (entre 10–50 km). Paso configurable."
             out = BytesIO(); wb.save(out); return out.getvalue()
 
-        st.download_button("⬇️ CSV (HAAT)", data=res_df.to_csv(index=False).encode("utf-8"),
-                           file_name="haat_por_azimut.csv", mime="text/csv")
-        st.download_button("⬇️ Excel (HAAT)", data=df_to_excel_bytes(res_df, "HAAT"),
-                           file_name="haat_por_azimut.xlsx",
+        st.download_button("⬇️ CSV (Δh)", data=res_df.to_csv(index=False).encode("utf-8"),
+                           file_name="deltaH_ITM_resultados.csv", mime="text/csv")
+        st.download_button("⬇️ Excel (Δh)", data=df_to_excel_bytes(res_df),
+                           file_name="deltaH_ITM_resultados.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ---------------------------
-# 📶 Predicción ITM (Simplificado)
+# Mostrar resultados de otras categorías
 # ---------------------------
-if categoria == "Predicción ITM (Simplificado)":
-    st.markdown("#### Entradas de Predicción (estilo MSAM/FCC)")
-
-    col = st.columns(6)
-    with col[0]: fmhz_p = st.number_input("Frecuencia (MHz)", value=100.0, min_value=30.0, step=0.1, format="%.1f")
-    with col[1]: erp_kw = st.number_input("ERP (kW)", value=5.0, min_value=0.001, step=0.1, format="%.3f")
-    with col[2]: az_p = st.number_input("Azimut (°)", value=0.0, min_value=0.0, max_value=359.9, step=0.1)
-    with col[3]: h_tx_agl = st.number_input("Altura TX AGL (m)", value=50.0, min_value=0.0, step=1.0)
-    with col[4]: h_rx_agl = st.number_input("Altura RX AGL (m)", value=10.0, min_value=0.0, step=0.5)
-    with col[5]: aplicar_hg = st.checkbox("Aplicar corrección de altura (G_h)", value=True)
-
-    col2 = st.columns(4)
-    with col2[0]: fuente_p = st.selectbox("Fuente elevación", ["SRTM (online por defecto)", "ASTER (GeoTIFF)", "GTOPO30 (GeoTIFF)"])
-    with col2[1]: aster_path_p = st.text_input("Ruta GeoTIFF (si ASTER/GTOPO30)", value="")
-    with col2[2]: d_km_max = st.number_input("Distancia máx (km)", value=60.0, min_value=1.0, step=1.0, format="%.1f")
-    with col2[3]: paso_km = st.number_input("Paso (km)", value=1.0, min_value=0.1, step=0.1, format="%.1f")
-
-    st.caption("Notas: Δh se evalúa 10–50 km; HAAT a 3–16 km. Si no hay resultados previos, la app los calcula automáticamente para el azimut indicado.")
-
-    if st.button("Calcular Predicción ITM (Simplificado)", key="calc_itm_btn"):
-        st.session_state.itm_state = {"status":"running"}
-
-        # Fuente DEM
-        ds_raster = None
-        use_srtm = (fuente_p.startswith("SRTM"))
-        if not use_srtm:
-            if aster_path_p.strip():
-                ds_raster = open_raster(aster_path_p.strip())
-                if ds_raster is None:
-                    st.info("No se pudo abrir el GeoTIFF. Se usará SRTM.")
-                    use_srtm = True
-            else:
-                st.info("No se indicó ruta GeoTIFF. Se usará SRTM.")
-                use_srtm = True
-
-        # Elevación sitio
-        elev_site = get_site_elevation(lat, lon, use_srtm, ds_raster)
-        ant_amsl = (elev_site if elev_site is not None else 0.0) + h_tx_agl
-
-        # 1) Δh (10–50 km, 500 m) — usar de estado previo si existe, si no calcular para este azimut
-        delta_h_val = None
-        if st.session_state.deltaH_state and st.session_state.deltaH_state.get("status")=="done":
-            df_dh = st.session_state.deltaH_state["df"]
-            row = df_dh.loc[df_dh["Azimut (°)"].round(1) == round(az_p,1)]
-            if not row.empty and "Δh (m)" in row.columns:
-                delta_h_val = float(row.iloc[0]["Δh (m)"])
-        if delta_h_val is None:
-            # calcular on-the-fly
-            dists_m, lats, lons = build_profile(lat, lon, az_p, 10.0, 50.0, 500)
-            elevs = elev_srtm(lats, lons) if use_srtm else elev_raster(ds_raster, lats, lons)
-            delta_h_val, _, _ = compute_delta_h(elevs)
-
-        # 2) HAAT (3–16 km, 500 m) — usar de estado previo si existe, si no calcular
-        haat_val = None
-        if st.session_state.haat_state and st.session_state.haat_state.get("status")=="done":
-            df_h = st.session_state.haat_state["df"]
-            rowh = df_h.loc[df_h["Azimut (°)"].round(1) == round(az_p,1)]
-            if not rowh.empty and "HAAT (m)" in rowh.columns:
-                haat_val = float(rowh.iloc[0]["HAAT (m)"])
-        if haat_val is None:
-            d2_m, lats2, lons2 = build_profile(lat, lon, az_p, 3.0, 16.0, 500)
-            elevs2 = elev_srtm(lats2, lons2) if use_srtm else elev_raster(ds_raster, lats2, lons2)
-            avgterr = avg_terrain(elevs2)
-            haat_val = (ant_amsl - avgterr) if (avgterr is not None) else None
-
-        # 3) Calcular curva de pérdida/ campo vs distancia
-        d_vals = np.arange(1.0, d_km_max+1e-9, paso_km, dtype=float)
-        erp_dBk = 10.0 * math.log10(erp_kw)  # ERP en kW -> dBk
-        series = []
-        for d_km in d_vals:
-            fspl = 32.45 + 20.0*math.log10(fmhz_p) + 20.0*math.log10(max(d_km, 1e-6))
-            dF = 0.0
-            if delta_h_val is not None:
-                dF = deltaF_from_deltaH(delta_h_val, fmhz_p)  # puede ser negativo -> reduce pérdida
-            Gh = height_gain_db(haat_val, h_rx_agl) if aplicar_hg else 0.0
-            Lp = fspl - dF - Gh
-            E = 106.92 + erp_dBk - Lp  # dBµV/m
-            series.append({"Distancia (km)": d_km, "Lp (dB)": Lp, "E (dBµV/m)": E})
-
-        pred_df = pd.DataFrame(series)
-        st.session_state.itm_state = {
-            "status":"done",
-            "inputs":{"fmhz": fmhz_p, "erp_kw": erp_kw, "az": az_p, "h_tx_agl": h_tx_agl, "h_rx_agl": h_rx_agl,
-                      "delta_h": delta_h_val, "haat": haat_val, "aplicar_hg": aplicar_hg},
-            "df": pred_df
-        }
-
-    # Mostrar resultados persistentes de la predicción
-    if st.session_state.itm_state and st.session_state.itm_state.get("status")=="done":
-        info = st.session_state.itm_state["inputs"]
-        pred_df = st.session_state.itm_state["df"]
-
-        st.subheader("Resultados de Predicción (ITM simplificado)")
-        cols = st.columns(5)
-        cols[0].metric("Δh usado (m)", f"{info.get('delta_h', None):.2f}" if info.get('delta_h') else "—")
-        cols[1].metric("HAAT usado (m)", f"{info.get('haat', None):.2f}" if info.get('haat') else "—")
-        cols[2].metric("ERP (dBk)", f"{10*math.log10(info['erp_kw']):.2f}")
-        cols[3].metric("f (MHz)", f"{info['fmhz']:.1f}")
-        cols[4].metric("Azimut (°)", f"{info['az']:.1f}")
-
-        st.dataframe(pred_df, use_container_width=True)
-
-        # Gráfico
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=pred_df["Distancia (km)"], y=pred_df["E (dBµV/m)"],
-                                 mode="lines", name="Campo E"))
-        fig.add_trace(go.Scatter(x=pred_df["Distancia (km)"], y=pred_df["Lp (dB)"],
-                                 mode="lines", name="Pérdida Lp", yaxis="y2"))
-        fig.update_layout(
-            title="Campo y Pérdida vs Distancia",
-            xaxis_title="Distancia (km)",
-            yaxis=dict(title="E (dBµV/m)"),
-            yaxis2=dict(title="Lp (dB)", overlaying="y", side="right")
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Descargas
-        def df_to_excel_bytes(df, sheet="Pred_ITM"):
-            from openpyxl import Workbook
-            from openpyxl.utils.dataframe import dataframe_to_rows
-            wb = Workbook(); ws = wb.active; ws.title = sheet
-            for r in dataframe_to_rows(df, index=False, header=True): ws.append(r)
-            ws["G1"] = "Lp = 32.45 + 20log f + 20log d - ΔF - G_h ; E(dBµV/m) = 106.92 + ERP(dBk) - Lp"
-            out = BytesIO(); wb.save(out); return out.getvalue()
-
-        st.download_button("⬇️ CSV (Predicción ITM)", data=pred_df.to_csv(index=False).encode("utf-8"),
-                           file_name="prediccion_itm_simplificado.csv", mime="text/csv")
-        st.download_button("⬇️ Excel (Predicción ITM)", data=df_to_excel_bytes(pred_df),
-                           file_name="prediccion_itm_simplificado.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-# ---------------------------
-# Mostrar resultados persistentes de otras categorías
-# ---------------------------
-if categoria in st.session_state.resultados and categoria not in ("Δh – Rugosidad (ITM)", "Altura efectiva (HAAT)", "Predicción ITM (Simplificado)"):
+if categoria in st.session_state.resultados and categoria != "Δh – Rugosidad (ITM)":
     df = st.session_state.resultados[categoria]
     st.subheader("Resultados")
     if "Distancia (km)" in df.columns and categoria in ("Cálculo - 8 Radiales", "Cálculo por Azimut"):
@@ -666,7 +446,11 @@ if categoria in st.session_state.resultados and categoria not in ("Δh – Rugos
             st.dataframe(df[df["Distancia (km)"] == d], use_container_width=True)
     else:
         st.dataframe(df, use_container_width=True)
+
+    # Mapa
     mostrar_mapa_generico(df, lat, lon, categoria)
+
+    # Descarga
     st.download_button(
         "📥 Descargar CSV",
         data=df.to_csv(index=False, sep=';', encoding='utf-8'),
