@@ -1,22 +1,22 @@
 # -*- coding: utf-8 -*-
-# app.py — Coordenadas + Δh (ITM/MSAM)
+# app.py — Coordenadas + Δh (ITM/MSAM) completo (versión corregida)
 # Incluye:
-# - 8 Radiales
-# - Por Azimut
-# - Distancia
-# - Distancia Central
-# - Δh (FCC/MSAM con percentiles sobre lista ordenada)
-# Elevaciones: SRTM 1/3 (srtm.py) + respaldo Open-Meteo
-# Tramo Δh: 10–50 km, paso editable, resolución editable
-# Conversión decimal ↔ GMS
-# Mapas Folium, perfiles Plotly, descargas CSV/Excel
+# - 8 radiales, cálculo por azimut, distancia, distancia central
+# - Δh (FCC/MSAM) con metodología correcta:
+#   ordenar elevaciones → percentil 10 → percentil 90 → Δh = h90 – h10
+# - Paso editable
+# - Resolución editable (m/pixel)
+# - SRTM + Open-Meteo fallback
+# - Conversión Decimal ↔ GMS
+# - Mapas y perfiles interactivos
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import math
+import time
+import requests
 from io import BytesIO
-import time, requests
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 
 from pygeodesy.ellipsoidalVincenty import LatLon
@@ -25,288 +25,527 @@ from streamlit_folium import st_folium
 import plotly.graph_objects as go
 import srtm
 
-# ---------------- Configuración ----------------
-st.set_page_config(page_title="Coordenadas + Δh (ITM)", layout="wide")
-st.title("🧭 Coordenadas + 🌄 Δh (ITM / estilo MSAM)")
 
-# ---------------- Estado ----------------
+# ------------------------------------------------------------
+# CONFIGURACIÓN GENERAL
+# ------------------------------------------------------------
+
+st.set_page_config(page_title="Coordenadas + Δh ITM", layout="wide")
+st.title("🧭 Calculadora Avanzada de Coordenadas + 🌄 Δh (ITM / FCC / MSAM)")
+
+
+# ------------------------------------------------------------
+# ESTADOS
+# ------------------------------------------------------------
+
 if "categoria" not in st.session_state:
     st.session_state.categoria = "Cálculo - 8 Radiales"
+
 if "resultados" not in st.session_state:
     st.session_state.resultados = {}
+
 if "deltaH_state" not in st.session_state:
     st.session_state.deltaH_state = None
 
-# ---------------- Geodesia / conversiones ----------------
+
+# ------------------------------------------------------------
+# FUNCIONES GEO Y CONVERSIONES
+# ------------------------------------------------------------
+
 R_EARTH_M = 6371000.0
 
 def destination_point(lat_deg, lon_deg, bearing_deg, distance_m):
-    lat1 = math.radians(lat_deg); lon1 = math.radians(lon_deg)
-    brng = math.radians(bearing_deg); dr = distance_m / R_EARTH_M
-    lat2 = math.asin(math.sin(lat1)*math.cos(dr)+math.cos(lat1)*math.sin(dr)*math.cos(brng))
-    lon2 = lon1 + math.atan2(math.sin(brng)*math.sin(dr)*math.cos(lat1),
-                             math.cos(dr)-math.sin(lat1)*math.sin(lat2))
-    return math.degrees(lat2), (math.degrees(lon2)+540)%360-180
+    lat1 = math.radians(lat_deg)
+    lon1 = math.radians(lon_deg)
+    brng = math.radians(bearing_deg)
+    dr = distance_m / R_EARTH_M
 
-def decimal_a_gms(g,tipo):
-    d={"lat":"N" if g>=0 else "S", "lon":"E" if g>=0 else "W"}[tipo]
-    gabs=abs(g); g0=int(gabs)
-    mdec=(gabs-g0)*60; m=int(mdec)
-    s=(mdec-m)*60
-    return f"{g0}° {m}' {s:.8f}\" {d}"
+    lat2 = math.asin(math.sin(lat1)*math.cos(dr) +
+                     math.cos(lat1)*math.sin(dr)*math.cos(brng))
 
-def gms_a_decimal(g,m,s,d,tipo):
-    dec=abs(g)+m/60+s/3600
-    if d in ("S","W"): dec=-dec
+    lon2 = lon1 + math.atan2(
+        math.sin(brng)*math.sin(dr)*math.cos(lat1),
+        math.cos(dr) - math.sin(lat1)*math.sin(lat2)
+    )
+
+    return math.degrees(lat2), (math.degrees(lon2) + 540) % 360 - 180
+
+
+def decimal_a_gms(dec, tipo):
+    d = {"lat": "N" if dec >= 0 else "S",
+         "lon": "E" if dec >= 0 else "W"}[tipo]
+    v = abs(dec)
+    g = int(v)
+    m_dec = (v - g) * 60
+    m = int(m_dec)
+    s = (m_dec - m) * 60
+    return f"{g}° {m}' {s:.6f}\" {d}"
+
+
+def gms_a_decimal(g, m, s, d, tipo):
+    dec = abs(g) + m/60 + s/3600
+    if d in ("S", "W"):
+        dec = -dec
     return dec
 
-def input_decimal(label_lat,label_lon,key):
-    c1,c2=st.columns(2)
-    with c1: lat=float(st.text_input(label_lat,"8.8066",key=f"{key}_lat"))
-    with c2: lon=float(st.text_input(label_lon,"-82.5403",key=f"{key}_lon"))
-    st.caption(f"GMS → Lat {decimal_a_gms(lat,'lat')} | Lon {decimal_a_gms(lon,'lon')}")
-    return lat,lon
 
-def input_gms(key):
-    st.write("Latitud (GMS)")
+# ---------------- INPUT DECIMAL ----------------
+
+def input_decimal(label_lat, label_lon, key_prefix):
+    c1, c2 = st.columns(2)
+    with c1:
+        lat_txt = st.text_input(label_lat, value="8.8066", key=f"{key_prefix}_lat")
+    with c2:
+        lon_txt = st.text_input(label_lon, value="-82.5403", key=f"{key_prefix}_lon")
+
+    try:
+        lat = float(lat_txt)
+        lon = float(lon_txt)
+    except:
+        st.error("Coordenadas decimales inválidas.")
+        st.stop()
+
+    st.caption(f"↔ GMS: {decimal_a_gms(lat,'lat')} | {decimal_a_gms(lon,'lon')}")
+    return lat, lon
+
+
+# ---------------- INPUT GMS ----------------
+
+def input_gms(key_prefix):
+    st.write("**Latitud (GMS)**")
     a,b,c,d = st.columns(4)
-    with a: g1=st.number_input("Grados",8)
-    with b: m1=st.number_input("Min",48)
-    with c: s1=st.number_input("Seg",23.76,step=0.01)
-    with d: d1=st.selectbox("Dir",["N","S"])
-    st.write("Longitud (GMS)")
+    with a: g1 = st.number_input("Grados", value=8, step=1, key=f"{key_prefix}_lat_g")
+    with b: m1 = st.number_input("Min", value=48, min_value=0, max_value=59, step=1, key=f"{key_prefix}_lat_m")
+    with c: s1 = st.number_input("Seg", value=23.76, min_value=0.0, max_value=59.999999, step=0.01, key=f"{key_prefix}_lat_s")
+    with d: d1c = st.selectbox("Dir", ["N","S"], index=0, key=f"{key_prefix}_lat_d")
+
+    st.write("**Longitud (GMS)**")
     e,f,g,h = st.columns(4)
-    with e: g2=st.number_input("Grados_lon",82)
-    with f: m2=st.number_input("Min_lon",32)
-    with g: s2=st.number_input("Seg_lon",25.08,step=0.01)
-    with h: d2=st.selectbox("Dir_lon",["E","W"],index=1)
-    lat=gms_a_decimal(g1,m1,s1,d1,"lat")
-    lon=gms_a_decimal(g2,m2,s2,d2,"lon")
-    st.caption(f"Decimal → Lat {lat} | Lon {lon}")
-    return lat,lon
+    with e: g2 = st.number_input("Grados ", value=82, step=1, key=f"{key_prefix}_lon_g")
+    with f: m2 = st.number_input("Min ", value=32, min_value=0, max_value=59, step=1, key=f"{key_prefix}_lon_m")
+    with g: s2 = st.number_input("Seg ", value=25.08, min_value=0.0, max_value=59.999999, step=0.01, key=f"{key_prefix}_lon_s")
+    with h: d2c = st.selectbox("Dir ", ["E","W"], index=1, key=f"{key_prefix}_lon_d")
 
-def input_coords(key):
-    modo=st.radio("Formato:",["Decimal","GMS"],horizontal=True,key=f"{key}_fmt")
-    if modo=="Decimal": return input_decimal("Latitud (decimal)","Longitud (decimal)",key)
-    return input_gms(key)
+    lat = gms_a_decimal(g1, m1, s1, d1c, "lat")
+    lon = gms_a_decimal(g2, m2, s2, d2c, "lon")
 
-# ---------------- Elevaciones ----------------
+    st.caption(f"↔ Decimal: {lat:.10f}, {lon:.10f}")
+    return lat, lon
+
+
+# ---------------- SELECCIÓN FORMATO ----------------
+
+def input_coords(key_prefix="base"):
+    modo = st.radio(
+        "Formato de entrada",
+        ["Decimal", "GMS"],
+        horizontal=True,
+        key=f"{key_prefix}_fmt"
+    )
+
+    if modo == "Decimal":
+        return input_decimal("Latitud (decimal)", "Longitud (decimal)", key_prefix)
+    else:
+        return input_gms(key_prefix)
+
+
+
+# ------------------------------------------------------------
+# ELEVACIONES (SRTM + FALLBACK OPEN-METEO)
+# ------------------------------------------------------------
+
 @st.cache_resource
 def get_srtm_data():
     return srtm.get_data()
 
-def elev_srtm(lats,lons,res):
-    data=get_srtm_data()
-    vals=[data.get_elevation(a,b) for a,b in zip(lats,lons)]
-    fuente = "SRTM1 (30 m)" if res<=30 else "SRTM3 (90 m)"
-    return vals,fuente
+
+def elev_srtm(lats, lons):
+    data = get_srtm_data()
+    vals = [data.get_elevation(la,lo) for la,lo in zip(lats,lons)]
+    return vals
+
 
 class Elev429(Exception): pass
 
-@retry(wait=wait_exponential(multiplier=0.8,min=0.5,max=8),
+
+@retry(wait=wait_exponential(min=0.5, max=4),
        stop=stop_after_attempt(5),
        retry=retry_if_exception_type(Elev429))
-def elev_open_chunk(lat,lon):
-    base="https://api.open-meteo.com/v1/elevation"
-    r=requests.get(base,params={
-        "latitude":",".join([f"{x:.6f}" for x in lat]),
-        "longitude":",".join([f"{x:.6f}" for x in lon])
-    },timeout=15)
-    if r.status_code==429: raise Elev429()
+def elev_open_meteo_chunk(lats, lons):
+    base = "https://api.open-meteo.com/v1/elevation"
+    params = {
+        "latitude": ",".join([f"{x:.6f}" for x in lats]),
+        "longitude": ",".join([f"{x:.6f}" for x in lons])
+    }
+    r = requests.get(base, params=params)
+    if r.status_code == 429:
+        raise Elev429()
     r.raise_for_status()
-    return r.json().get("elevation",[])
+    return r.json().get("elevation", [])
 
-def elev_open(lats,lons):
-    out=[]
-    for i in range(0,len(lats),80):
-        sub=elev_open_chunk(lats[i:i+80],lons[i:i+80])
-        out.extend(sub); time.sleep(0.2)
+
+def elev_open_meteo(lats, lons):
+    out = []
+    for i in range(0, len(lats), 80):
+        sub = elev_open_meteo_chunk(lats[i:i+80], lons[i:i+80])
+        out.extend(sub)
+        time.sleep(0.2)
     return [float(v) if v is not None else None for v in out]
 
-def get_elevations(lats,lons,res):
-    elev,fuente=elev_srtm(lats,lons,res)
+
+def get_elevations(lats, lons):
+    elev = elev_srtm(lats,lons)
+
     if any(v is None for v in elev):
         try:
-            elev2=elev_open(lats,lons)
+            elev2 = elev_open_meteo(lats,lons)
             for i,v in enumerate(elev):
-                elev[i]=v if v is not None else elev2[i]
-            fuente += " + Open-Meteo"
+                if v is None:
+                    elev[i] = elev2[i]
         except:
             pass
-    return elev,fuente
 
-# ---------------- Perfil y Δh ----------------
-def build_profile(lat0,lon0,az,start_km,end_km,step_m):
-    d=list(range(int(start_km*1000),int(end_km*1000)+1,int(step_m)))
-    LATS=[]; LONS=[]
-    for di in d:
-        la,lo=destination_point(lat0,lon0,az,di)
-        LATS.append(la); LONS.append(lo)
-    return d,LATS,LONS
+    return elev
 
-# *** METODOLOGÍA FCC/MSAM — ORDENAR → P10/P90 ***
-def compute_delta_h(elev_list):
-    arr=np.array([e for e in elev_list if e is not None],float)
-    if arr.size<5: return None,None,None
 
-    # 1. Orden explícito
-    elev_sorted=np.sort(arr)
+# ------------------------------------------------------------
+# UTILIDADES DE COORDENADAS
+# ------------------------------------------------------------
 
-    # 2. Percentiles FCC
-    h10=float(np.percentile(elev_sorted,90))
-    h90=float(np.percentile(elev_sorted,10))
+def calcular_puntos(lat, lon, acimuts, distancias_m):
+    base = LatLon(lat, lon)
+    out = []
 
-    # 3. Δh
-    dh=h10-h90
-    return round(dh,2),round(h10,2),round(h90,2)
-
-# ---------------- Utilidades varias ----------------
-def calcular_puntos(lat,lon,azs,dists):
-    base=LatLon(lat,lon); out=[]
-    for d in dists:
-        for az in azs:
-            p=base.destination(d,az)
+    for d in distancias_m:
+        for az in acimuts:
+            p = base.destination(d, az)
             out.append({
                 "Distancia (km)": d/1000,
                 "Acimut (°)": az,
-                "Latitud Final (Decimal)": f"{p.lat:.10f}",
-                "Longitud Final (Decimal)": f"{p.lon:.10f}",
-                "Latitud (GMS)": decimal_a_gms(p.lat,"lat"),
-                "Longitud (GMS)": decimal_a_gms(p.lon,"lon")
+                "Latitud Final": f"{p.lat:.10f}",
+                "Longitud Final": f"{p.lon:.10f}",
+                "Lat (GMS)": decimal_a_gms(p.lat,"lat"),
+                "Lon (GMS)": decimal_a_gms(p.lon,"lon")
             })
+
     return pd.DataFrame(out)
 
-def calcular_distancia_azimut(lat1,lon1,lat2,lon2):
-    p1=LatLon(lat1,lon1); p2=LatLon(lat2,lon2)
-    d=p1.distanceTo(p2)/1000
-    return d,p1.initialBearingTo(p2),p2.initialBearingTo(p1)
 
-def mostrar_mapa(df,lat,lon,categoria):
-    m=folium.Map(location=[lat,lon],zoom_start=9,control_scale=True)
-    if categoria in ("Cálculo - 8 Radiales","Cálculo por Azimut"):
-        for _,r in df.iterrows():
-            folium.Marker([float(r["Latitud Final (Decimal)"]),
-                           float(r["Longitud Final (Decimal)"])],
-                           tooltip=f"{r.get('Acimut (°)','')}°").add_to(m)
-        folium.Marker([lat,lon],icon=folium.Icon(color="red")).add_to(m)
-    st_folium(m,width=None,height=450)
+def calcular_distancia_azimut(lat1, lon1, lat2, lon2):
+    p1 = LatLon(lat1, lon1)
+    p2 = LatLon(lat2, lon2)
 
-# ---------------- Mosaico ----------------
-st.markdown("### Selecciona la categoría:")
+    dkm = p1.distanceTo(p2)/1000
+    az12 = p1.initialBearingTo(p2)
+    az21 = p2.initialBearingTo(p1)
+
+    return dkm, az12, az21
+
+
+def build_profile(lat, lon, az, step_m):
+    dists = list(range(10000, 50001, step_m))
+    lats, lons = [], []
+
+    for d in dists:
+        la, lo = destination_point(lat, lon, az, d)
+        lats.append(la)
+        lons.append(lo)
+
+    return dists, lats, lons
+
+
+# ------------------------------------------------------------
+# METODOLOGÍA FCC/MSAM PARA Δh
+# ------------------------------------------------------------
+
+def compute_delta_h(elev_list):
+    # ‼️ Método correcto:
+    # 1. ordenar elevaciones
+    # 2. h10 = percentil 90
+    # 3. h90 = percentil 10
+    # 4. Δh = h10 – h90
+
+    arr = np.array([e for e in elev_list if e is not None])
+
+    if arr.size == 0:
+        return None, None, None
+
+    arr_sorted = np.sort(arr)
+
+    h10 = float(np.percentile(arr_sorted, 90))
+    h90 = float(np.percentile(arr_sorted, 10))
+
+    return h10 - h90, h10, h90
+
+
+
+# ------------------------------------------------------------
+# MENÚ/MOSAICO DE CATEGORÍAS
+# ------------------------------------------------------------
+
+st.markdown("### Selecciona una categoría")
+
 c1,c2 = st.columns(2)
 c3,c4 = st.columns(2)
-c5,_ = st.columns(2)
+c5,_  = st.columns(2)
 
-if c1.button("📍 Cálculo - 8 Radiales"): st.session_state.categoria="Cálculo - 8 Radiales"
-if c2.button("🧭 Cálculo por Azimut"):   st.session_state.categoria="Cálculo por Azimut"
-if c3.button("📏 Cálculo de Distancia"): st.session_state.categoria="Cálculo de Distancia"
-if c4.button("🗺️ Cálculo Distancia Central"): st.session_state.categoria="Cálculo de Distancia Central"
-if c5.button("🌄 Δh – Rugosidad (ITM)"): st.session_state.categoria="Δh – Rugosidad (ITM)"
+if c1.button("📍 Cálculo - 8 Radiales"):
+    st.session_state.categoria = "Cálculo - 8 Radiales"
 
-categoria=st.session_state.categoria
-st.markdown(f"### 🟢 Categoría seleccionada: {categoria}")
+if c2.button("🧭 Cálculo por Azimut"):
+    st.session_state.categoria = "Cálculo por Azimut"
 
-# ---------------- Coordenadas base ----------------
-lat,lon=input_coords(categoria)
+if c3.button("📏 Cálculo de Distancia"):
+    st.session_state.categoria = "Cálculo de Distancia"
 
-# ---------------- Cálculos ----------------
-if categoria=="Cálculo - 8 Radiales":
-    if st.button("Calcular"):
-        st.session_state.resultados[categoria]=calcular_puntos(lat,lon,[0,45,90,135,180,225,270,315],[10000,50000])
+if c4.button("🗺️ Cálculo de Distancia Central"):
+    st.session_state.categoria = "Cálculo de Distancia Central"
 
-elif categoria=="Cálculo por Azimut":
-    az_txt=st.text_input("Azimuts","0,45,90,135,180,225,270,315")
-    d1=st.number_input("Distancia 1",10000); d2=st.number_input("Distancia 2",50000)
-    if st.button("Calcular"):
-        az=[float(a) for a in az_txt.split(",")]
-        st.session_state.resultados[categoria]=calcular_puntos(lat,lon,az,[d1,d2])
+if c5.button("🌄 Δh – Rugosidad"):
+    st.session_state.categoria = "Δh – Rugosidad"
 
-elif categoria=="Cálculo de Distancia":
-    lat2=float(st.text_input("Lat2","8.8066"))
-    lon2=float(st.text_input("Lon2","-82.5403"))
-    if st.button("Calcular"):
-        d,az1,az2=calcular_distancia_azimut(lat,lon,lat2,lon2)
-        st.session_state.resultados[categoria]=pd.DataFrame([{
-            "Distancia (km)":d,"Acimut ida":az1,"Acimut vuelta":az2
+
+categoria = st.session_state.categoria
+st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
+
+
+
+# ------------------------------------------------------------
+# COORDENADAS BASE
+# ------------------------------------------------------------
+
+lat, lon = input_coords(key_prefix=f"{categoria}_base")
+
+
+
+# ------------------------------------------------------------
+# CÁLCULOS SEGÚN CATEGORÍA
+# ------------------------------------------------------------
+
+# ------------------- 8 RADIALES -------------------
+
+if categoria == "Cálculo - 8 Radiales":
+    acimuts = [0,45,90,135,180,225,270,315]
+    dist_m  = [10000, 50000]
+
+    if st.button("Calcular", key="calc8"):
+        st.session_state.resultados[categoria] = calcular_puntos(lat, lon, acimuts, dist_m)
+
+
+
+# ------------------- CÁLCULO POR AZIMUT -------------------
+
+elif categoria == "Cálculo por Azimut":
+
+    az_txt = st.text_input("Azimuts (°) separados por coma",
+                           value="0,45,90,135,180,225,270,315")
+
+    d1 = st.number_input("Distancia 1 (m)", value=10000, min_value=1, step=100)
+    d2 = st.number_input("Distancia 2 (m)", value=50000, min_value=1, step=100)
+
+    if st.button("Calcular", key="calcaz"):
+
+        try:
+            acimuts = [float(a.strip()) for a in az_txt.split(",") if a.strip() != ""]
+        except:
+            st.error("Error en la lista de azimuts.")
+            st.stop()
+
+        st.session_state.resultados[categoria] = calcular_puntos(lat, lon, acimuts, [d1,d2])
+
+
+
+# ------------------- DISTANCIA DIRECTA -------------------
+
+elif categoria == "Cálculo de Distancia":
+
+    modo2 = st.radio("Formato punto 2", ["Decimal","GMS"], horizontal=True)
+
+    if modo2 == "Decimal":
+        c1, c2 = st.columns(2)
+        with c1: lat2 = st.text_input("Latitud 2", value="8.8066")
+        with c2: lon2 = st.text_input("Longitud 2", value="-82.5403")
+        lat2f = float(lat2)
+        lon2f = float(lon2)
+
+    else:
+        lat2f, lon2f = input_gms("destino")
+
+    if st.button("Calcular", key="calcdist"):
+        dkm, az12, az21 = calcular_distancia_azimut(lat, lon, lat2f, lon2f)
+        st.session_state.resultados[categoria] = pd.DataFrame([{
+            "Distancia (km)": dkm,
+            "Acimut ida": az12,
+            "Acimut vuelta": az21
         }])
 
-elif categoria=="Cálculo de Distancia Central":
-    n=st.number_input("Número de puntos",2)
-    filas=[]
+
+
+# ------------------- DISTANCIA CENTRAL -------------------
+
+elif categoria == "Cálculo de Distancia Central":
+
+    n = st.number_input("Número de puntos", value=2, min_value=1, step=1)
+    filas = []
+
     for i in range(int(n)):
-        latp=float(st.text_input(f"Latitud punto {i+1}","8.8066"))
-        lonp=float(st.text_input(f"Longitud punto {i+1}","-82.5403"))
-        d,az1,az2=calcular_distancia_azimut(lat,lon,latp,lonp)
-        filas.append({"Distancia":d,"Acimut ida":az1,"Acimut vuelta":az2})
-    if st.button("Calcular"):
-        st.session_state.resultados[categoria]=pd.DataFrame(filas)
+        modo = st.radio(f"Formato punto {i+1}", ["Decimal","GMS"], horizontal=True)
 
-# ---------------- Δh – Rugosidad (ITM) ----------------
-if categoria=="Δh – Rugosidad (ITM)":
+        if modo == "Decimal":
+            latp = float(st.text_input(f"Latitud punto {i+1}", value="8.8066"))
+            lonp = float(st.text_input(f"Longitud punto {i+1}", value="-82.5403"))
 
-    az_txt=st.text_input("Azimuts","0,45,90,135,180,225,270,315")
-    paso=st.number_input("Paso (m)",500)
-    res=st.number_input("Resolución deseada (m/pixel)",30,min_value=10)
+        else:
+            latp, lonp = input_gms(f"punto{i}")
 
-    if st.button("Calcular Δh"):
-        az_list=[float(a) for a in az_txt.split(",")]
-        results=[] ; profiles={}
-        start_km,end_km=10,50
-        prog=st.progress(0)
+        dkm,az12,az21 = calcular_distancia_azimut(lat, lon, latp, lonp)
 
-        for i,az in enumerate(az_list,1):
-            d,lats,lons=build_profile(lat,lon,az,start_km,end_km,paso)
-            elev,fuente=get_elevations(lats,lons,res)
-            dh,h10,h90=compute_delta_h(elev)
+        filas.append({
+            "Punto": i+1,
+            "Distancia (km)": dkm,
+            "Acimut ida": az12,
+            "Acimut vuelta": az21,
+        })
+
+    if st.button("Calcular", key="calccentral"):
+        st.session_state.resultados[categoria] = pd.DataFrame(filas)
+
+
+
+# ------------------------------------------------------------
+# Δh – RUGOSIDAD (FCC/MSAM)
+# ------------------------------------------------------------
+
+elif categoria == "Δh – Rugosidad":
+
+    az_txt = st.text_input("Azimuts (°)", value="0,45,90,135,180,225,270,315")
+
+    paso_m = st.number_input("Paso (m)",
+                             value=500,
+                             min_value=50,
+                             step=50,
+                             help="Default MSAM = 500 m")
+
+    if st.button("Calcular Δh", key="calcdh"):
+
+        try:
+            az_list = [float(a.strip()) for a in az_txt.split(",") if a.strip()!=""]
+        except:
+            st.error("Revisa la lista de azimuts.")
+            st.stop()
+
+        results = []
+        profiles = {}
+
+        pb = st.progress(0)
+        total = len(az_list)
+
+        for i, az in enumerate(az_list, start=1):
+
+            dists, lats, lons = build_profile(lat, lon, az, paso_m)
+
+            elev = get_elevations(lats, lons)
+
+            dh, h10, h90 = compute_delta_h(elev)
+
             results.append({
-                "Azimut (°)":az,
-                "Δh (m)":dh,
-                "h10 (P90)":h10,
-                "h90 (P10)":h90,
-                "Fuente":fuente
+                "Azimut (°)": az,
+                "Δh (m)": dh,
+                "h10 (P90)": h10,
+                "h90 (P10)": h90
             })
-            profiles[az]=pd.DataFrame({"Dist(km)":[x/1000 for x in d],"Elev(m)":elev})
-            prog.progress(int(i*100/len(az_list)))
 
-        df=pd.DataFrame(results)
+            profiles[az] = pd.DataFrame({
+                "Distancia (km)": [d/1000 for d in dists],
+                "Elevación (m)": elev
+            })
 
-        # promedios
-        v=df.dropna(subset=["Δh (m)"])
-        prom_dh=v["Δh (m)"].mean()
-        prom_h10=v["h10 (P90)"].mean()
-        prom_h90=v["h90 (P10)"].mean()
+            pb.progress(int(i*100/total))
 
-        st.subheader("Resultados Δh")
-        st.markdown(f"""
-**Promedios FCC/MSAM**
-- Δh promedio: **{prom_dh:.2f} m**
-- h10 promedio: **{prom_h10:.2f} m**
-- h90 promedio: **{prom_h90:.2f} m**
-- Resolución usada: **{res} m/pixel**
-        """)
+        df = pd.DataFrame(results).sort_values("Azimut (°)")
 
-        st.dataframe(df,use_container_width=True)
+        st.session_state.deltaH_state = {
+            "df": df,
+            "profiles": profiles,
+            "paso": paso_m,
+        }
 
-        # Perfil
-        azsel=st.selectbox("Perfil:",df["Azimut (°)"])
-        pr=profiles[azsel]
-        fig=go.Figure()
-        fig.add_trace(go.Scatter(x=pr["Dist(km)"],y=pr["Elev(m)"],mode="lines"))
-        fig.update_layout(title=f"Perfil Az {azsel}°",xaxis_title="km",yaxis_title="Elev (m)")
-        st.plotly_chart(fig,use_container_width=True)
 
-        # Mapa
-        m=folium.Map(location=[lat,lon],zoom_start=8)
-        folium.Marker([lat,lon],icon=folium.Icon(color="red")).add_to(m)
-        for az in az_list:
-            pts=[]
-            prof=profiles[az]
-            for dkm in prof["Dist(km)"]:
-                la,lo=destination_point(lat,lon,az,dkm*1000)
-                pts.append([la,lo])
-            folium.PolyLine(pts,weight=3).add_to(m)
-        st_folium(m,width=None,height=520)
+# ------------------------------------------------------------
+# RESULTADOS (CUALQUIER CATEGORÍA)
+# ------------------------------------------------------------
 
-        # Descargas
-        st.download_button("CSV Δh",data=df.to_csv(index=False).encode("utf-8"),
-                           file_name="DeltaH_ITM.csv",mime="text/csv")
+# ----- PARA LAS CATEGORÍAS NORMALES -----
+
+if categoria in st.session_state.resultados and categoria != "Δh – Rugosidad":
+
+    df = st.session_state.resultados[categoria]
+
+    st.subheader("Resultados")
+    st.dataframe(df, use_container_width=True)
+
+    # Mapa
+    m = folium.Map(location=[lat, lon], zoom_start=9)
+    folium.Marker([lat,lon], tooltip="Punto inicial", icon=folium.Icon(color="red")).add_to(m)
+
+    st_folium(m, width=None, height=450)
+
+
+# ----- PARA RUGOSIDAD Δh -----
+
+if categoria == "Δh – Rugosidad" and st.session_state.deltaH_state:
+
+    data = st.session_state.deltaH_state
+    df = data["df"]
+    profiles = data["profiles"]
+
+    st.subheader("Resultados de Rugosidad Δh (FCC / MSAM)")
+    st.dataframe(df, use_container_width=True)
+
+    # Promedio
+    if "Δh (m)" in df.columns:
+        st.markdown(f"**Δh promedio:** {df['Δh (m)'].mean():.2f} m")
+
+    # Perfil
+    az_sel = st.selectbox("Ver perfil:", df["Azimut (°)"])
+
+    prof = profiles.get(az_sel)
+
+    if prof is not None:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=prof["Distancia (km)"],
+            y=prof["Elevación (m)"],
+            mode="lines",
+            name=f"Perfil {az_sel}°"
+        ))
+        fig.update_layout(
+            title=f"Perfil de Terreno — Azimut {az_sel}°",
+            xaxis_title="Distancia (km)",
+            yaxis_title="Elevación (m)"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
+    # ----- MAPA -----
+    m = folium.Map(location=[lat,lon], zoom_start=8)
+    folium.Marker([lat,lon], tooltip="Transmisor", icon=folium.Icon(color="red")).add_to(m)
+
+    for az in profiles:
+        pts=[]
+        for dkm in profiles[az]["Distancia (km)"]:
+            la,lo = destination_point(lat,lon,az,dkm*1000)
+            pts.append([la,lo])
+        folium.PolyLine(pts, weight=3, opacity=0.85).add_to(m)
+
+    st.subheader("Mapa de Radiales (10–50 km)")
+    st_folium(m, width=None, height=520)
+
+
+    # ----- DESCARGA -----
+    st.download_button(
+        "Descargar CSV Δh",
+        df.to_csv(index=False).encode("utf-8"),
+        "DeltaH_resultados.csv",
+        "text/csv"
+    )
