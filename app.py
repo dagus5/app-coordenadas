@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-# app.py — Coordenadas + Δh (ITM/MSAM) 0–50 km
+# app.py — Coordenadas + Δh (ITM/FCC/MSAM) 0–50 km
 # Incluye:
 # - 8 radiales, cálculo por azimut, distancia, distancia central
-# - Δh con metodología tipo FCC/MSAM:
-#   ordenar elevaciones → percentil 10 → percentil 90 → Δh = h10 – h90
+# - Δh con metodología tipo ITM/FCC/MSAM:
+#   ordenar elevaciones → percentiles 10 y 90 → Δh = h90 – h10
 # - Tramo 0–50 km, paso editable
 # - SRTM (srtm.py) + Open-Meteo como respaldo
 # - Conversión Decimal ↔ GMS
@@ -166,8 +166,6 @@ def elev_srtm(lats, lons):
 class Elev429(Exception):
     pass
 
-from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
-
 @retry(wait=wait_exponential(min=0.5, max=4),
        stop=stop_after_attempt(5),
        retry=retry_if_exception_type(Elev429))
@@ -242,22 +240,51 @@ def build_profile(lat, lon, az, step_m):
     return dists, lats, lons
 
 # ------------------------------------------------------------
-# METODOLOGÍA PARA Δh (0–50 km)
+# METODOLOGÍA PARA Δh (HÍBRIDA ITM/FCC/MSAM + PERSONALIZADO)
 # ------------------------------------------------------------
 
-def compute_delta_h(elev_list):
-    # 1. Filtrar Nones
-    # 2. Ordenar elevaciones
-    # 3. h10 = percentil 90
-    # 4. h90 = percentil 10
-    # 5. Δh = h10 – h90
-    arr = np.array([e for e in elev_list if e is not None])
-    if arr.size == 0:
+def compute_delta_h(dists_m, elev_list, metodo, d_min_custom=None, d_max_custom=None):
+    """
+    Cálculo híbrido de Δh:
+    - ITM / MSAM: 10–50 km
+    - FCC: 3–16 km
+    - 0–50 km completo: todo el perfil
+    - Personalizado (km): rango definido por el usuario
+    Δh = h90 – h10 (percentiles 90 y 10 de la elevación).
+    """
+
+    if metodo == "ITM / MSAM (10–50 km)":
+        d_min, d_max = 10000, 50000
+    elif metodo == "FCC (3–16 km)":
+        d_min, d_max = 3000, 16000
+    elif metodo == "0–50 km completo":
+        d_min, d_max = 0, 50000
+    elif metodo == "Personalizado (km)" and d_min_custom is not None and d_max_custom is not None:
+        d_min, d_max = d_min_custom, d_max_custom
+    else:
+        d_min, d_max = 0, max(dists_m) if len(dists_m) > 0 else 0
+
+    # Filtrar por rango de distancias y descartar None
+    elev_filtradas = [
+        e for d, e in zip(dists_m, elev_list)
+        if e is not None and d_min <= d <= d_max
+    ]
+
+    if len(elev_filtradas) == 0:
         return None, None, None
-    arr_sorted = np.sort(arr)
-    h10 = float(np.percentile(arr_sorted, 90))
-    h90 = float(np.percentile(arr_sorted, 10))
-    return h10 - h90, h10, h90
+
+    arr = np.sort(np.array(elev_filtradas, dtype=float))
+    h10 = float(np.percentile(arr, 10))
+    h90 = float(np.percentile(arr, 90))
+    delta_h = h90 - h10  # P90 – P10
+
+    return delta_h, h10, h90
+
+RANGO_METODO = {
+    "ITM / MSAM (10–50 km)": "10–50",
+    "FCC (3–16 km)": "3–16",
+    "0–50 km completo": "0–50",
+}
 
 # ------------------------------------------------------------
 # MENÚ/MOSAICO DE CATEGORÍAS
@@ -370,7 +397,7 @@ elif categoria == "Cálculo de Distancia Central":
         st.session_state.resultados[categoria] = pd.DataFrame(filas)
 
 # ------------------------------------------------------------
-# Δh – RUGOSIDAD (0–50 km)
+# Δh – RUGOSIDAD (0–50 km, HÍBRIDO + PERSONALIZADO)
 # ------------------------------------------------------------
 
 elif categoria == "Δh – Rugosidad":
@@ -383,6 +410,38 @@ elif categoria == "Δh – Rugosidad":
         help="Tramo 0–50 km, separación entre puntos."
     )
 
+    metodo_dh = st.selectbox(
+        "Método de cálculo de Δh",
+        ["ITM / MSAM (10–50 km)",
+         "FCC (3–16 km)",
+         "0–50 km completo",
+         "Personalizado (km)"],
+        index=0,
+        help="Selecciona el rango de distancias sobre el que se calcula la rugosidad."
+    )
+
+    d_min_km = None
+    d_max_km = None
+
+    if metodo_dh == "Personalizado (km)":
+        c1, c2 = st.columns(2)
+        with c1:
+            d_min_km = st.number_input(
+                "Distancia mínima (km)",
+                value=5.0,
+                min_value=0.0,
+                step=0.5
+            )
+        with c2:
+            d_max_km = st.number_input(
+                "Distancia máxima (km)",
+                value=30.0,
+                min_value=0.0,
+                step=0.5
+            )
+        if d_max_km <= d_min_km:
+            st.warning("La distancia máxima debe ser mayor que la mínima.")
+
     if st.button("Calcular Δh", key="calcdh"):
         try:
             az_list = [float(a.strip()) for a in az_txt.split(",") if a.strip() != ""]
@@ -390,23 +449,46 @@ elif categoria == "Δh – Rugosidad":
             st.error("Revisa la lista de azimuts.")
             st.stop()
 
+        if metodo_dh == "Personalizado (km)" and (d_min_km is None or d_max_km is None or d_max_km <= d_min_km):
+            st.error("Revisa el rango personalizado de distancias (km).")
+            st.stop()
+
         results = []
-        profiles = []
         profiles_dict = {}
 
         pb = st.progress(0)
         total = len(az_list)
 
+        # Preconvertir rango personalizado a metros
+        d_min_custom_m = d_max_custom_m = None
+        if metodo_dh == "Personalizado (km)":
+            d_min_custom_m = d_min_km * 1000.0
+            d_max_custom_m = d_max_km * 1000.0
+
         for i, az in enumerate(az_list, start=1):
             dists, lats, lons = build_profile(lat, lon, az, paso_m)
             elev = get_elevations(lats, lons)
-            dh, h10, h90 = compute_delta_h(elev)
+
+            dh, h10, h90 = compute_delta_h(
+                dists,
+                elev,
+                metodo_dh,
+                d_min_custom=d_min_custom_m,
+                d_max_custom=d_max_custom_m
+            )
+
+            if metodo_dh == "Personalizado (km)":
+                rango_txt = f"{d_min_km:.2f}–{d_max_km:.2f}"
+            else:
+                rango_txt = RANGO_METODO.get(metodo_dh, "")
 
             results.append({
                 "Azimut (°)": az,
                 "Δh (m)": dh,
-                "h10 (P90)": h10,
-                "h90 (P10)": h90
+                "h10 (P10, m)": h10,
+                "h90 (P90, m)": h90,
+                "Método Δh": metodo_dh,
+                "Rango (km)": rango_txt
             })
 
             df_prof = pd.DataFrame({
@@ -447,7 +529,7 @@ if categoria == "Δh – Rugosidad" and st.session_state.deltaH_state:
     df = data["df"]
     profiles = data["profiles"]
 
-    st.subheader("Resultados de Rugosidad Δh (0–50 km)")
+    st.subheader("Resultados de Rugosidad Δh")
     st.dataframe(df, use_container_width=True)
 
     if "Δh (m)" in df.columns and df["Δh (m)"].notna().any():
@@ -491,3 +573,4 @@ if categoria == "Δh – Rugosidad" and st.session_state.deltaH_state:
         "DeltaH_resultados.csv",
         "text/csv"
     )
+
