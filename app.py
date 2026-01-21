@@ -594,10 +594,7 @@ elif categoria == "Contorno FCC":
             df=curvas
         )
 
-        
-curvas = cargar_curvas_fcc()
-st.write("HAAT únicos:", curvas["haat_m"].unique())
-st.write("Distancia máxima:", curvas["distance_km"].max())
+     
 st.success(f"📏 Distancia del contorno: **{d_km:.2f} km**")
 
 # ------------------------------------------------------------
