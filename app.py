@@ -531,7 +531,7 @@ elif categoria == "Contorno FCC":
             (106.0 / campo_db)
         )
 
-   if st.button("Calcular contorno FCC"):    
+if st.button("Calcular contorno FCC"):    
        d_km = fcc_distancia_aprox(erp_kw, haat_m, campo_db)
 
     azs = np.arange(0, 360, 5)
