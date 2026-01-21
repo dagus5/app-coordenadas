@@ -126,7 +126,7 @@ lon = st.number_input("Longitud (decimal)", value=-82.5403)
 # >>> NUEVA CATEGORÍA: CONTORNO FCC
 # ------------------------------------------------------------
 
-if categoria == "Contorno FCC":
+elif categoria == "Contorno FCC":
 
     st.subheader("Parámetros del Contorno FCC")
 
@@ -151,6 +151,7 @@ if categoria == "Contorno FCC":
 
         azimuts = np.arange(0, 360, 5)
         puntos = []
+        distancias = []
 
         for az in azimuts:
             att = 0
@@ -164,14 +165,50 @@ if categoria == "Contorno FCC":
                 campo
             )
 
-            if dist:
+            if dist is not None:
+                distancias.append(dist)
                 la, lo = destination_point(lat, lon, az, dist * 1000)
                 puntos.append([la, lo])
 
-        m = folium.Map(location=[lat, lon], zoom_start=8)
-        folium.Marker([lat, lon], tooltip="Transmisor",
-                      icon=folium.Icon(color="red")).add_to(m)
+        if len(distancias) == 0:
+            st.error("No se pudo calcular el contorno con los parámetros dados.")
+            st.stop()
 
+        # Guardar en estado
+        st.session_state.fcc_result = {
+            "puntos": puntos,
+            "distancias": distancias,
+            "campo": campo
+        }
+
+# ------------------------------------------------------------
+# MOSTRAR RESULTADOS FCC (FUERA DEL BOTÓN)
+# ------------------------------------------------------------
+
+if categoria == "Contorno FCC" and "fcc_result" in st.session_state:
+
+    res = st.session_state.fcc_result
+    puntos = res["puntos"]
+    distancias = res["distancias"]
+    campo = res["campo"]
+
+    d_max = max(distancias)
+    d_med = np.mean(distancias)
+
+    st.success(
+        f"📡 Contorno {campo} dBµV/m\n\n"
+        f"• Distancia máxima: **{d_max:.2f} km**\n"
+        f"• Distancia promedio: **{d_med:.2f} km**"
+    )
+
+    m = folium.Map(location=[lat, lon], zoom_start=8)
+    folium.Marker(
+        [lat, lon],
+        tooltip="Transmisor",
+        icon=folium.Icon(color="red")
+    ).add_to(m)
+
+    if len(puntos) >= 3:
         folium.Polygon(
             locations=puntos,
             color="blue",
@@ -180,4 +217,5 @@ if categoria == "Contorno FCC":
             tooltip=f"Contorno {campo} dBµV/m"
         ).add_to(m)
 
-        st_folium(m, width=None, height=550)
+    st_folium(m, width=None, height=550)
+
