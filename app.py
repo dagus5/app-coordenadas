@@ -652,7 +652,7 @@ elif categoria == "Contorno ITM":
     paso_km = st.number_input("Paso radial (km)", value=1.0, min_value=0.2)
     max_km = st.number_input("Distancia máxima (km)", value=300.0)
 
-    if st.button("Calcular contorno ITM"):
+if st.button("Calcular contorno ITM"):
 
         azs = np.arange(0, 360, 5)
         puntos = []
@@ -672,7 +672,7 @@ elif categoria == "Contorno ITM":
                     break
                 d += paso_km
 
-        if len(puntos) < 5:
+if len(puntos) < 5:
             st.error("No se pudo cerrar el contorno.")
             st.stop()
 
