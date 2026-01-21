@@ -294,7 +294,7 @@ st.markdown("### Selecciona una categoría")
 
 c1, c2 = st.columns(2)
 c3, c4 = st.columns(2)
-c5, _ = st.columns(2)
+c5, c6 = st.columns(2)
 
 if c1.button("📍 Cálculo - 8 Radiales"):
     st.session_state.categoria = "Cálculo - 8 Radiales"
@@ -310,6 +310,9 @@ if c4.button("🗺️ Cálculo de Distancia Central"):
 
 if c5.button("🌄 Δh – Rugosidad"):
     st.session_state.categoria = "Δh – Rugosidad"
+    
+if c6.button("📡 Contorno FCC"):
+    st.session_state.categoria = "Contorno FCC"
 
 categoria = st.session_state.categoria
 st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
@@ -505,6 +508,54 @@ elif categoria == "Δh – Rugosidad":
             "profiles": profiles_dict,
             "paso": paso_m,
         }
+# ------------------------------------------------------------
+# CONTORNO FCC (F(50,50))
+# ------------------------------------------------------------
+
+elif categoria == "Contorno FCC":
+
+    st.subheader("📡 Contorno FCC – F(50,50)")
+
+    erp_kw = st.number_input("ERP (kW)", value=1.0, min_value=0.01)
+    haat_m = st.number_input("HAAT (m)", value=100.0)
+    campo_db = st.number_input("Nivel de campo (dBµV/m)", value=54.0)
+
+    def fcc_distancia_aprox(erp_kw, haat_m, campo_db):
+        return max(
+            1.0,
+            (1.06 * math.sqrt(erp_kw)) *
+            (haat_m / 100.0) ** 0.3 *
+            (106.0 / campo_db)
+        )
+
+    if st.button("Calcular contorno FCC"):
+        d_km = fcc_distancia_aprox(erp_kw, haat_m, campo_db)
+
+        st.success(f"📏 Distancia del contorno: **{d_km:.1f} km**")
+
+        azs = np.arange(0, 360, 5)
+        pts = []
+
+        for az in azs:
+            la, lo = destination_point(lat, lon, az, d_km * 1000)
+            pts.append([la, lo])
+
+        m = folium.Map(location=[lat, lon], zoom_start=7)
+        folium.Marker(
+            [lat, lon],
+            tooltip="Transmisor",
+            icon=folium.Icon(color="red")
+        ).add_to(m)
+
+        folium.Polygon(
+            pts,
+            color="blue",
+            fill=True,
+            fill_opacity=0.3,
+            tooltip=f"{campo_db} dBµV/m"
+        ).add_to(m)
+
+        st_folium(m, height=550)
 
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
@@ -573,38 +624,3 @@ if categoria == "Δh – Rugosidad" and st.session_state.deltaH_state:
         "DeltaH_resultados.csv",
         "text/csv"
     )
-
-
-# ------------------------------------------------------------
-# CONTORNO FCC (54 dBµV/m o cualquier nivel)
-# ------------------------------------------------------------
-
-elif categoria == "Contorno FCC":
-
-    st.subheader("📡 Contorno FCC F(50,50)")
-
-    erp_kw = st.number_input("ERP (kW)", value=1.0, min_value=0.01)
-    haat_m = st.number_input("HAAT (m)", value=100.0)
-    campo_db = st.number_input("Nivel de campo (dBµV/m)", value=54.0)
-
-    def fcc_distancia(erp_kw, haat_m, campo_db):
-        # Aproximación ingeniería (misma lógica FCC)
-        return max(1.0, (1.06 * math.sqrt(erp_kw)) * (haat_m/100)**0.3 * (106/campo_db))
-
-    if st.button("Calcular contorno"):
-        d_km = fcc_distancia(erp_kw, haat_m, campo_db)
-
-        st.success(f"📏 Distancia del contorno: **{d_km:.1f} km**")
-
-        azs = np.arange(0,360,5)
-        pts = []
-
-        for az in azs:
-            la, lo = destination_point(lat, lon, az, d_km*1000)
-            pts.append([la, lo])
-
-        m = folium.Map(location=[lat, lon], zoom_start=7)
-        folium.Marker([lat, lon], tooltip="Transmisor").add_to(m)
-        folium.Polygon(pts, color="blue", fill=True, fill_opacity=0.3).add_to(m)
-
-        st_folium(m, height=550)
