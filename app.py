@@ -570,10 +570,18 @@ elif categoria == "Contorno FCC":
         "Nivel de campo (dBµV/m)", min_value=30.0, max_value=80.0, value=54.0
     )
 
-    if st.button("Calcular contorno FCC"):
-        d_km = distancia_fcc_aproximada(erp_kw, haat_m, campo_db)
+   if st.button("Calcular contorno FCC"):
+    curvas = cargar_curvas_fcc()
 
-        st.success(f"📏 Distancia del contorno: **{d_km:.2f} km**")
+    d_km = distancia_fcc_f5050(
+        erp_kw=erp_kw,
+        haat_m=haat_m,
+        campo_db=campo_db,
+        df=curvas
+    )
+
+    st.success(f"📏 Distancia del contorno: **{d_km:.2f} km**")
+
 
 
 
