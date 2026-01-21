@@ -24,43 +24,6 @@ import plotly.graph_objects as go
 import srtm
 
 # ------------------------------------------------------------
-# ITM / LONGLEY-RICE (pyitm3)
-# ------------------------------------------------------------
-
-from pyitm import itm
-
-def campo_itm_dbuvm(
-    freq_mhz,
-    erp_kw,
-    dist_km,
-    tx_h_m,
-    rx_h_m=9,
-    climate=5,
-    pol=0,
-):
-    """
-    Calcula campo eléctrico ITM en dBµV/m
-    F(50,50)
-    """
-
-    loss = itm.longley_rice(
-        f=freq_mhz,
-        d=dist_km * 1000,
-        h_tx=tx_h_m,
-        h_rx=rx_h_m,
-        climate=climate,
-        pol=pol,
-        mode=0,
-        pct_time=50,
-        pct_loc=50,
-        pct_conf=50,
-    )
-
-    # Campo eléctrico FM
-    e_dbuvm = 106.92 + 10 * math.log10(erp_kw) - loss
-    return e_dbuvm
-
-# ------------------------------------------------------------
 # CONFIGURACIÓN GENERAL
 # ------------------------------------------------------------
 
@@ -79,9 +42,6 @@ if "resultados" not in st.session_state:
 
 if "deltaH_state" not in st.session_state:
     st.session_state.deltaH_state = None
-    
-if "fcc_state" not in st.session_state:
-    st.session_state.fcc_state = None
 
 # ------------------------------------------------------------
 # FUNCIONES GEO Y CONVERSIONES
@@ -325,52 +285,6 @@ RANGO_METODO = {
     "FCC (3–16 km)": "3–16",
     "0–50 km completo": "0–50",
 }
-# ------------------------------------------------------------
-# CURVAS FCC F(50,50) – FM
-# ------------------------------------------------------------
-
-@st.cache_data
-def cargar_curvas_fcc():
-    return pd.read_csv("fcc_fm_f5050.csv")
-
-
-def distancia_fcc_f5050(erp_kw, haat_m, campo_db, df):
-
-    campo_1kw = campo_db + 10 * math.log10(erp_kw)
-
-    haats = np.sort(df["haat_m"].unique())
-
-    if haat_m <= haats.min():
-        h1 = h2 = haats.min()
-    elif haat_m >= haats.max():
-        h1 = h2 = haats.max()
-    else:
-        h1 = haats[haats <= haat_m].max()
-        h2 = haats[haats >= haat_m].min()
-
-    def interp_dist(h):
-        sub = df[df["haat_m"] == h].sort_values("field_dbu_1kw")
-
-        campos = sub["field_dbu_1kw"].values
-        dist = sub["distance_km"].values
-
-        # 🔴 CLIP FCC: no extrapolar fuera de la curva
-        if campo_1kw >= campos.max():
-            return dist[0]        # campo fuerte → distancia corta
-        if campo_1kw <= campos.min():
-            return dist[-1]       # campo débil → último punto válido
-
-        return np.interp(campo_1kw, campos[::-1], dist[::-1])
-
-    d1 = interp_dist(h1)
-    d2 = interp_dist(h2)
-
-    if h1 == h2:
-        return float(d1)
-
-    return float(d1 + (d2 - d1) * (haat_m - h1) / (h2 - h1))
-
-st.write("✅ Funciones FCC cargadas")
 
 # ------------------------------------------------------------
 # MENÚ/MOSAICO DE CATEGORÍAS
@@ -380,7 +294,7 @@ st.markdown("### Selecciona una categoría")
 
 c1, c2 = st.columns(2)
 c3, c4 = st.columns(2)
-c5, c6 = st.columns(2)
+c5, _ = st.columns(2)
 
 if c1.button("📍 Cálculo - 8 Radiales"):
     st.session_state.categoria = "Cálculo - 8 Radiales"
@@ -396,13 +310,6 @@ if c4.button("🗺️ Cálculo de Distancia Central"):
 
 if c5.button("🌄 Δh – Rugosidad"):
     st.session_state.categoria = "Δh – Rugosidad"
-    
-if c6.button("📡 Contorno FCC"):
-    st.session_state.categoria = "Contorno FCC"
-
-if st.button("🛰️ Contorno ITM"):
-    st.session_state.categoria = "Contorno ITM"
-
 
 categoria = st.session_state.categoria
 st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
@@ -598,101 +505,6 @@ elif categoria == "Δh – Rugosidad":
             "profiles": profiles_dict,
             "paso": paso_m,
         }
-# ------------------------------------------------------------
-# CONTORNO FCC (F(50,50))
-# ------------------------------------------------------------
-
-elif categoria == "Contorno FCC":
-
-    st.subheader("📡 Contorno FCC F(50,50) – FM")
-
-    erp_kw = st.number_input(
-        "ERP (kW)",
-        min_value=0.01,
-        value=1.0
-    )
-
-    haat_m = st.number_input(
-        "HAAT (m)",
-        min_value=1.0,
-        value=100.0
-    )
-
-    campo_db = st.number_input(
-        "Nivel de campo (dBµV/m)",
-        min_value=20.0,
-        max_value=80.0,
-        value=54.0
-    )
-
-       
-st.success(f"📏 Distancia del contorno: **{d_km:.2f} km**")
-
-# ------------------------------------------------------------
-# CONTORNO ITM (LONGLEY-RICE)
-# ------------------------------------------------------------
-
-elif categoria == "Contorno ITM":
-
-    st.subheader("🛰️ Contorno ITM (Longley-Rice)")
-
-    freq_mhz = st.number_input("Frecuencia (MHz)", value=100.1)
-    erp_kw = st.number_input("ERP (kW)", value=1.0, min_value=0.01)
-    tx_h_m = st.number_input("Altura antena TX (m)", value=100.0)
-    campo_obj = st.number_input("Campo objetivo (dBµV/m)", value=54.0)
-
-    paso_km = st.number_input("Paso radial (km)", value=1.0, min_value=0.2)
-    max_km = st.number_input("Distancia máxima (km)", value=300.0)
-
-if st.button("Calcular contorno ITM"):
-
-        azs = np.arange(0, 360, 5)
-        puntos = []
-
-        for az in azs:
-            d = paso_km
-            while d <= max_km:
-                e = campo_itm_dbuvm(
-                    freq_mhz,
-                    erp_kw,
-                    d,
-                    tx_h_m
-                )
-                if e <= campo_obj:
-                    la, lo = destination_point(lat, lon, az, d * 1000)
-                    puntos.append([la, lo])
-                    break
-                d += paso_km
-
-if len(puntos) < 5:
-            st.error("No se pudo cerrar el contorno.")
-            st.stop()
-
-        m = folium.Map(location=[lat, lon], zoom_start=8)
-        folium.Marker(
-            [lat, lon],
-            tooltip="Transmisor",
-            icon=folium.Icon(color="red")
-        ).add_to(m)
-
-        folium.Polygon(
-            locations=puntos,
-            color="blue",
-            fill=True,
-            fill_opacity=0.3,
-            tooltip="Cobertura ITM"
-        ).add_to(m)
-
-        st.success(
-            f"Contorno ITM calculado para {campo_obj} dBµV/m"
-        )
-
-        st_folium(m, height=520)
-        st.caption(
-    "Cobertura estimada mediante el modelo ITM (Longley-Rice). "
-    "No sustituye el contorno FCC F(50,50) normativo."
-)
-
 
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
@@ -761,3 +573,4 @@ if categoria == "Δh – Rugosidad" and st.session_state.deltaH_state:
         "DeltaH_resultados.csv",
         "text/csv"
     )
+
