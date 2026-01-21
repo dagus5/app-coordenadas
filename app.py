@@ -637,9 +637,11 @@ elif categoria == "Contorno FCC":
 
      
 st.success(f"📏 Distancia del contorno: **{d_km:.2f} km**")
+
 # ------------------------------------------------------------
 # CONTORNO ITM (LONGLEY-RICE)
 # ------------------------------------------------------------
+
 elif categoria == "Contorno ITM":
 
     st.subheader("🛰️ Contorno ITM (Longley-Rice)")
