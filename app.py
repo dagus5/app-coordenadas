@@ -42,6 +42,9 @@ if "resultados" not in st.session_state:
 
 if "deltaH_state" not in st.session_state:
     st.session_state.deltaH_state = None
+    
+if "fcc_state" not in st.session_state:
+    st.session_state.fcc_state = None
 
 # ------------------------------------------------------------
 # FUNCIONES GEO Y CONVERSIONES
