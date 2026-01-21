@@ -42,7 +42,7 @@ if "deltaH_state" not in st.session_state:
 R_EARTH_M = 6371000.0
 
 def destination_point(lat_deg, lon_deg, bearing_deg, distance_m):
-    lat1 = math.radians(latAD
+    lat1 = math.radians(latAD)
     lon1 = math.radians(lon_deg)
     brng = math.radians(bearing_deg)
     dr = distance_m / R_EARTH_M
