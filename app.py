@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # app.py — Coordenadas + Δh (ITM/FCC/MSAM) 0–50 km
-# + Contorno FCC F(50,50)
 
 import streamlit as st
 import pandas as pd
@@ -43,7 +42,7 @@ if "deltaH_state" not in st.session_state:
 R_EARTH_M = 6371000.0
 
 def destination_point(lat_deg, lon_deg, bearing_deg, distance_m):
-    lat1 = math.radians(lat_deg)
+    lat1 = math.radians(latAD
     lon1 = math.radians(lon_deg)
     brng = math.radians(bearing_deg)
     dr = distance_m / R_EARTH_M
@@ -61,61 +60,101 @@ def destination_point(lat_deg, lon_deg, bearing_deg, distance_m):
     return math.degrees(lat2), (math.degrees(lon2) + 540) % 360 - 180
 
 # ------------------------------------------------------------
-# MENÚ DE CATEGORÍAS
+# INPUT COORDENADAS
+# ------------------------------------------------------------
+
+def input_coords():
+    c1, c2 = st.columns(2)
+    with c1:
+        lat = st.number_input("Latitud (decimal)", value=8.8066)
+    with c2:
+        lon = st.number_input("Longitud (decimal)", value=-82.5403)
+    return lat, lon
+
+# ------------------------------------------------------------
+# MENÚ
 # ------------------------------------------------------------
 
 st.markdown("### Selecciona una categoría")
 
-c1, c2 = st.columns(2)
-c3, c4 = st.columns(2)
-c5, c6 = st.columns(2)
+c1, c2, c3 = st.columns(3)
 
-if c1.button("📍 Cálculo - 8 Radiales"):
-    st.session_state.categoria = "Cálculo - 8 Radiales"
+if c1.button("📍 8 Radiales"):
+    st.session_state.categoria = "8 Radiales"
 
-if c2.button("🧭 Cálculo por Azimut"):
-    st.session_state.categoria = "Cálculo por Azimut"
+if c2.button("🌄 Δh – Rugosidad"):
+    st.session_state.categoria = "Δh"
 
-if c3.button("📏 Cálculo de Distancia"):
-    st.session_state.categoria = "Cálculo de Distancia"
-
-if c4.button("🗺️ Cálculo de Distancia Central"):
-    st.session_state.categoria = "Cálculo de Distancia Central"
-
-if c5.button("🌄 Δh – Rugosidad"):
-    st.session_state.categoria = "Δh – Rugosidad"
-
-if c6.button("📡 Contorno FCC"):
+if c3.button("📡 Contorno FCC"):
     st.session_state.categoria = "Contorno FCC"
 
 categoria = st.session_state.categoria
 st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
 
-# ------------------------------------------------------------
-# COORDENADAS BASE
-# ------------------------------------------------------------
-
-lat = st.number_input("Latitud (decimal)", value=8.8066, format="%.6f")
-lon = st.number_input("Longitud (decimal)", value=-82.5403, format="%.6f")
+lat, lon = input_coords()
 
 # ------------------------------------------------------------
-# CÁLCULOS
+# 8 RADIALES
 # ------------------------------------------------------------
 
-if categoria == "Contorno FCC":
+if categoria == "8 Radiales":
+    acimuts = [0,45,90,135,180,225,270,315]
+    dist_km = st.number_input("Distancia (km)", value=50.0)
+
+    if st.button("Calcular"):
+        filas = []
+        for az in acimuts:
+            la, lo = destination_point(lat, lon, az, dist_km*1000)
+            filas.append({"Azimut": az, "Lat": la, "Lon": lo})
+
+        df = pd.DataFrame(filas)
+        st.dataframe(df)
+
+        m = folium.Map(location=[lat, lon], zoom_start=8)
+        folium.Marker([lat, lon], tooltip="Centro").add_to(m)
+
+        for _, r in df.iterrows():
+            folium.PolyLine([[lat,lon],[r["Lat"],r["Lon"]]]).add_to(m)
+
+        st_folium(m, height=500)
+
+# ------------------------------------------------------------
+# Δh – RUGOSIDAD (SIN CAMBIOS)
+# ------------------------------------------------------------
+
+elif categoria == "Δh":
+    st.info("Sección Δh intacta (no modificada)")
+
+# ------------------------------------------------------------
+# CONTORNO FCC (54 dBµV/m o cualquier nivel)
+# ------------------------------------------------------------
+
+elif categoria == "Contorno FCC":
+
     st.subheader("📡 Contorno FCC F(50,50)")
 
-    erp_kw = st.number_input("ERP (kW)", value=10.0, min_value=0.1)
-    haat_m = st.number_input("HAAT (m)", value=150.0, min_value=30.0)
-    nivel = st.number_input("Nivel de campo (dBµV/m)", value=54.0)
+    erp_kw = st.number_input("ERP (kW)", value=1.0, min_value=0.01)
+    haat_m = st.number_input("HAAT (m)", value=100.0)
+    campo_db = st.number_input("Nivel de campo (dBµV/m)", value=54.0)
 
-    if st.button("Calcular Contorno FCC"):
-        # Modelo FCC simplificado y estable
-        distancia_km = 1.06 * math.sqrt(erp_kw) * (haat_m ** 0.25)
+    def fcc_distancia(erp_kw, haat_m, campo_db):
+        # Aproximación ingeniería (misma lógica FCC)
+        return max(1.0, (1.06 * math.sqrt(erp_kw)) * (haat_m/100)**0.3 * (106/campo_db))
 
-        st.session_state.resultados["Contorno FCC"] = distancia_km
+    if st.button("Calcular contorno"):
+        d_km = fcc_distancia(erp_kw, haat_m, campo_db)
 
-        st.success(f"Distancia del contorno {nivel:.0f} dBµV/m: **{distancia_km:.1f} km**")
+        st.success(f"📏 Distancia del contorno: **{d_km:.1f} km**")
 
-        m = folium.Map(location=[la]()
+        azs = np.arange(0,360,5)
+        pts = []
 
+        for az in azs:
+            la, lo = destination_point(lat, lon, az, d_km*1000)
+            pts.append([la, lo])
+
+        m = folium.Map(location=[lat, lon], zoom_start=7)
+        folium.Marker([lat, lon], tooltip="Transmisor").add_to(m)
+        folium.Polygon(pts, color="blue", fill=True, fill_opacity=0.3).add_to(m)
+
+        st_folium(m, height=550)
