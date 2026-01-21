@@ -24,6 +24,28 @@ import plotly.graph_objects as go
 import srtm
 
 # ------------------------------------------------------------
+# CONTORNO FCC F(50,50) – MODELO APROXIMADO (FM)
+# ------------------------------------------------------------
+
+def distancia_fcc_aproximada(erp_kw, haat_m, campo_db):
+    """
+    Cálculo aproximado del contorno FCC F(50,50) para FM.
+    Devuelve distancia en km.
+    """
+
+    if erp_kw <= 0 or haat_m <= 0:
+        return 0.0
+
+    d_km = (
+        1.06
+        * math.sqrt(erp_kw)
+        * (haat_m ** 0.25)
+        * (10 ** ((92 - campo_db) / 20))
+    )
+
+    return float(d_km)
+
+# ------------------------------------------------------------
 # CONFIGURACIÓN GENERAL
 # ------------------------------------------------------------
 
@@ -564,16 +586,17 @@ elif categoria == "Contorno FCC":
 
     st.subheader("📡 Contorno FCC F(50,50) – FM")
 
-    erp_kw = st.number_input("ERP (kW)", value=1.0, min_value=0.01)
-    haat_m = st.number_input("HAAT (m)", value=100.0)
-    campo_db = st.number_input("Nivel de campo (dBµV/m)", value=54.0)
-
-    curvas = cargar_curvas_fcc()
+    erp_kw = st.number_input("ERP (kW)", min_value=0.01, value=1.0)
+    haat_m = st.number_input("HAAT (m)", min_value=1.0, value=100.0)
+    campo_db = st.number_input(
+        "Nivel de campo (dBµV/m)", min_value=30.0, max_value=80.0, value=54.0
+    )
 
     if st.button("Calcular contorno FCC"):
-        d_km = distancia_fcc_f5050(erp_kw, haat_m, campo_db, curvas)
+        d_km = distancia_fcc_aproximada(erp_kw, haat_m, campo_db)
 
         st.success(f"📏 Distancia del contorno: **{d_km:.2f} km**")
+
 
 
 # ------------------------------------------------------------
