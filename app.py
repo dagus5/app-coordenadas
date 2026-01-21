@@ -22,9 +22,6 @@ import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
 import srtm
-@st.cache_data
-def cargar_curvas_fcc():
-    return pd.read_csv("fcc_fm_f5050.csv")
 
 # ------------------------------------------------------------
 # CONFIGURACIÓN GENERAL
@@ -291,6 +288,9 @@ RANGO_METODO = {
     "FCC (3–16 km)": "3–16",
     "0–50 km completo": "0–50",
 }
+@st.cache_data
+def cargar_curvas_fcc():
+    return pd.read_csv("fcc_fm_f5050.csv")
 
 # ------------------------------------------------------------
 # MENÚ/MOSAICO DE CATEGORÍAS
