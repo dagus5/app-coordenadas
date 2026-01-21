@@ -517,7 +517,7 @@ elif categoria == "Δh – Rugosidad":
 
 elif categoria == "Contorno FCC":
 
-    st.subheader("📡 Contorno FCC – F(50,50)")
+    st.subheader("📡 Contorno FCC F(50,50)")
 
     erp_kw = st.number_input("ERP (kW)", value=1.0, min_value=0.01)
     haat_m = st.number_input("HAAT (m)", value=100.0)
@@ -531,44 +531,43 @@ elif categoria == "Contorno FCC":
             (106.0 / campo_db)
         )
 
-if st.button("Calcular contorno FCC"):    
-       d_km = fcc_distancia_aprox(erp_kw, haat_m, campo_db)
+    if st.button("Calcular contorno FCC"):
+        d_km = fcc_distancia_aprox(erp_kw, haat_m, campo_db)
 
-    azs = np.arange(0, 360, 5)
-    pts = []
+        azs = np.arange(0, 360, 5)
+        pts = []
 
-    for az in azs:
-        la, lo = destination_point(lat, lon, az, d_km * 1000)
-        pts.append([la, lo])
+        for az in azs:
+            la, lo = destination_point(lat, lon, az, d_km * 1000)
+            pts.append([la, lo])
 
-    st.session_state.fcc_state = {
-        "dist_km": d_km,
-        "pts": pts
-    }
+        st.session_state.fcc_state = {
+            "dist_km": d_km,
+            "pts": pts
+        }
 
-if st.session_state.fcc_state is not None:
+    if st.session_state.fcc_state is not None:
+        d_km = st.session_state.fcc_state["dist_km"]
+        pts = st.session_state.fcc_state["pts"]
 
-    d_km = st.session_state.fcc_state["dist_km"]
-    pts = st.session_state.fcc_state["pts"]
+        st.success(f"📏 Distancia del contorno: **{d_km:.1f} km**")
 
-    st.success(f"📏 Distancia del contorno: **{d_km:.1f} km**")
+        m = folium.Map(location=[lat, lon], zoom_start=7)
+        folium.Marker(
+            [lat, lon],
+            tooltip="Transmisor",
+            icon=folium.Icon(color="red")
+        ).add_to(m)
 
-    m = folium.Map(location=[lat, lon], zoom_start=7)
-    folium.Marker(
-        [lat, lon],
-        tooltip="Transmisor",
-        icon=folium.Icon(color="red")
-    ).add_to(m)
+        folium.Polygon(
+            pts,
+            color="blue",
+            fill=True,
+            fill_opacity=0.3,
+            tooltip="Contorno FCC"
+        ).add_to(m)
 
-    folium.Polygon(
-        pts,
-        color="blue",
-        fill=True,
-        fill_opacity=0.3,
-        tooltip="Contorno FCC"
-    ).add_to(m)
-
-    st_folium(m, height=550)
+        st_folium(m, height=550)
 
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
