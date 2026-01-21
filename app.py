@@ -532,33 +532,42 @@ elif categoria == "Contorno FCC":
         )
 
     if st.button("Calcular contorno FCC"):
-        d_km = fcc_distancia_aprox(erp_kw, haat_m, campo_db)
+    d_km = fcc_distancia_aprox(erp_kw, haat_m, campo_db)
 
-        st.success(f"📏 Distancia del contorno: **{d_km:.1f} km**")
+    azs = np.arange(0, 360, 5)
+    pts = []
 
-        azs = np.arange(0, 360, 5)
-        pts = []
+    for az in azs:
+        la, lo = destination_point(lat, lon, az, d_km * 1000)
+        pts.append([la, lo])
 
-        for az in azs:
-            la, lo = destination_point(lat, lon, az, d_km * 1000)
-            pts.append([la, lo])
+    st.session_state.fcc_state = {
+        "dist_km": d_km,
+        "pts": pts
+    }
+if st.session_state.fcc_state is not None:
 
-        m = folium.Map(location=[lat, lon], zoom_start=7)
-        folium.Marker(
-            [lat, lon],
-            tooltip="Transmisor",
-            icon=folium.Icon(color="red")
-        ).add_to(m)
+    d_km = st.session_state.fcc_state["dist_km"]
+    pts = st.session_state.fcc_state["pts"]
 
-        folium.Polygon(
-            pts,
-            color="blue",
-            fill=True,
-            fill_opacity=0.3,
-            tooltip=f"{campo_db} dBµV/m"
-        ).add_to(m)
+    st.success(f"📏 Distancia del contorno: **{d_km:.1f} km**")
 
-        st_folium(m, height=550)
+    m = folium.Map(location=[lat, lon], zoom_start=7)
+    folium.Marker(
+        [lat, lon],
+        tooltip="Transmisor",
+        icon=folium.Icon(color="red")
+    ).add_to(m)
+
+    folium.Polygon(
+        pts,
+        color="blue",
+        fill=True,
+        fill_opacity=0.3,
+        tooltip="Contorno FCC"
+    ).add_to(m)
+
+    st_folium(m, height=550)
 
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
