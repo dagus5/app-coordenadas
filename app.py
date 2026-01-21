@@ -40,7 +40,7 @@ def distancia_fcc_aproximada(erp_kw, haat_m, campo_db):
         1.06
         * math.sqrt(erp_kw)
         * (haat_m ** 0.25)
-        * (10 ** ((92 - campo_db) / 20))
+        * (10 ** ((92 - campo_db) / 40))
     )
 
     return float(d_km)
