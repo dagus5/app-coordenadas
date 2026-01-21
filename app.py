@@ -126,6 +126,62 @@ lon = st.number_input("Longitud (decimal)", value=-82.5403)
 # >>> NUEVA CATEGORÍA: CONTORNO FCC
 # ------------------------------------------------------------
 
+if categoria == "Contorno FCC":
+
+    st.subheader("Parámetros del Contorno FCC")
+
+    erp_kw = st.number_input("ERP (kW)", value=1.0, min_value=0.01)
+    haat_m = st.number_input("HAAT (m)", value=100.0, min_value=1.0)
+    campo = st.number_input("Campo objetivo (dBµV/m)", value=54.0)
+
+    tipo_antena = st.selectbox(
+        "Tipo de antena",
+        ["Omnidireccional", "Direccional (CSV)"]
+    )
+
+    patron = None
+    if tipo_antena == "Direccional (CSV)":
+        csv_file = st.file_uploader(
+            "Cargar patrón (azimut, atten_db)", type=["csv"]
+        )
+        if csv_file:
+            patron = pd.read_csv(csv_file)
+
+    if st.button("Calcular contorno FCC"):
+
+        azimuts = np.arange(0, 360, 5)
+        puntos = []
+
+        for az in azimuts:
+            att = 0
+            if patron is not None:
+                row = patron.iloc[(patron["azimut"] - az).abs().argsort()[:1]]
+                att = float(row["atten_db"].values[0])
+
+            dist = fcc_distance_for_field(
+                erp_kw * (10 ** (-att / 10)),
+                haat_m,
+                campo
+            )
+
+            if dist:
+                la, lo = destination_point(lat, lon, az, dist * 1000)
+                puntos.append([la, lo])
+
+        m = folium.Map(location=[lat, lon], zoom_start=8)
+        folium.Marker([lat, lon], tooltip="Transmisor",
+                      icon=folium.Icon(color="red")).add_to(m)
+
+        folium.Polygon(
+            locations=puntos,
+            color="blue",
+            fill=True,
+            fill_opacity=0.35,
+            tooltip=f"Contorno {campo} dBµV/m"
+        ).add_to(m)
+
+        st_folium(m, width=None, height=550)
+
 elif categoria == "Contorno FCC":
 
     st.subheader("Parámetros del Contorno FCC")
@@ -218,4 +274,3 @@ if categoria == "Contorno FCC" and "fcc_result" in st.session_state:
         ).add_to(m)
 
     st_folium(m, width=None, height=550)
-
