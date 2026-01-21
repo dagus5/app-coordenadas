@@ -22,6 +22,9 @@ import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
 import srtm
+@st.cache_data
+def cargar_curvas_fcc():
+    return pd.read_csv("fcc_fm_f5050.csv")
 
 # ------------------------------------------------------------
 # CONFIGURACIÓN GENERAL
@@ -514,25 +517,20 @@ elif categoria == "Δh – Rugosidad":
 # ------------------------------------------------------------
 # CONTORNO FCC (F(50,50))
 # ------------------------------------------------------------
-
 elif categoria == "Contorno FCC":
 
-    st.subheader("📡 Contorno FCC F(50,50)")
+    st.subheader("📡 Contorno FCC F(50,50) – FM")
 
     erp_kw = st.number_input("ERP (kW)", value=1.0, min_value=0.01)
     haat_m = st.number_input("HAAT (m)", value=100.0)
     campo_db = st.number_input("Nivel de campo (dBµV/m)", value=54.0)
 
-    def fcc_distancia_aprox(erp_kw, haat_m, campo_db):
-        return max(
-            1.0,
-            (1.06 * math.sqrt(erp_kw)) *
-            (haat_m / 100.0) ** 0.3 *
-            (106.0 / campo_db)
-        )
+    curvas = cargar_curvas_fcc()
 
     if st.button("Calcular contorno FCC"):
-        d_km = fcc_distancia_aprox(erp_kw, haat_m, campo_db)
+        d_km = distancia_fcc_f5050(erp_kw, haat_m, campo_db, curvas)
+
+        st.success(f"📏 Distancia del contorno: **{d_km:.3f} km**")
 
         azs = np.arange(0, 360, 5)
         pts = []
@@ -541,33 +539,49 @@ elif categoria == "Contorno FCC":
             la, lo = destination_point(lat, lon, az, d_km * 1000)
             pts.append([la, lo])
 
-        st.session_state.fcc_state = {
-            "dist_km": d_km,
-            "pts": pts
-        }
-
-    if st.session_state.fcc_state is not None:
-        d_km = st.session_state.fcc_state["dist_km"]
-        pts = st.session_state.fcc_state["pts"]
-
-        st.success(f"📏 Distancia del contorno: **{d_km:.1f} km**")
-
         m = folium.Map(location=[lat, lon], zoom_start=7)
-        folium.Marker(
-            [lat, lon],
-            tooltip="Transmisor",
-            icon=folium.Icon(color="red")
-        ).add_to(m)
-
-        folium.Polygon(
-            pts,
-            color="blue",
-            fill=True,
-            fill_opacity=0.3,
-            tooltip="Contorno FCC"
-        ).add_to(m)
+        folium.Marker([lat, lon], tooltip="Transmisor").add_to(m)
+        folium.Polygon(pts, color="blue", fill=True, fill_opacity=0.3).add_to(m)
 
         st_folium(m, height=550)
+
+def distancia_fcc_f5050(erp_kw, haat_m, campo_db, df):
+    """
+    Calcula distancia FCC F(50,50) por interpolación real.
+    ERP en kW
+    HAAT en metros
+    Campo en dBµV/m
+    """
+
+    # Ajuste ERP (FCC trabaja con 1 kW base)
+    campo_1kw = campo_db + 10 * math.log10(erp_kw)
+
+    # Filtrar HAATs disponibles
+    haats = np.sort(df["haat_m"].unique())
+
+    if haat_m <= haats.min():
+        h1 = h2 = haats.min()
+    elif haat_m >= haats.max():
+        h1 = h2 = haats.max()
+    else:
+        h1 = haats[haats <= haat_m].max()
+        h2 = haats[haats >= haat_m].min()
+
+    def interp_dist(h):
+        sub = df[df["haat_m"] == h].sort_values("field_dbu_1kw")
+        return np.interp(
+            campo_1kw,
+            sub["field_dbu_1kw"][::-1],
+            sub["distance_km"][::-1]
+        )
+
+    d1 = interp_dist(h1)
+    d2 = interp_dist(h2)
+
+    if h1 == h2:
+        return d1
+
+    return d1 + (d2 - d1) * (haat_m - h1) / (h2 - h1)
 
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
