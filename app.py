@@ -24,6 +24,43 @@ import plotly.graph_objects as go
 import srtm
 
 # ------------------------------------------------------------
+# ITM / LONGLEY-RICE (pyitm3)
+# ------------------------------------------------------------
+
+from pyitm import itm
+
+def campo_itm_dbuvm(
+    freq_mhz,
+    erp_kw,
+    dist_km,
+    tx_h_m,
+    rx_h_m=9,
+    climate=5,
+    pol=0,
+):
+    """
+    Calcula campo eléctrico ITM en dBµV/m
+    F(50,50)
+    """
+
+    loss = itm.longley_rice(
+        f=freq_mhz,
+        d=dist_km * 1000,
+        h_tx=tx_h_m,
+        h_rx=rx_h_m,
+        climate=climate,
+        pol=pol,
+        mode=0,
+        pct_time=50,
+        pct_loc=50,
+        pct_conf=50,
+    )
+
+    # Campo eléctrico FM
+    e_dbuvm = 106.92 + 10 * math.log10(erp_kw) - loss
+    return e_dbuvm
+
+# ------------------------------------------------------------
 # CONFIGURACIÓN GENERAL
 # ------------------------------------------------------------
 
@@ -363,6 +400,10 @@ if c5.button("🌄 Δh – Rugosidad"):
 if c6.button("📡 Contorno FCC"):
     st.session_state.categoria = "Contorno FCC"
 
+if st.button("🛰️ Contorno ITM"):
+    st.session_state.categoria = "Contorno ITM"
+
+
 categoria = st.session_state.categoria
 st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
 
@@ -596,6 +637,70 @@ elif categoria == "Contorno FCC":
 
      
 st.success(f"📏 Distancia del contorno: **{d_km:.2f} km**")
+# ------------------------------------------------------------
+# CONTORNO ITM (LONGLEY-RICE)
+# ------------------------------------------------------------
+elif categoria == "Contorno ITM":
+
+    st.subheader("🛰️ Contorno ITM (Longley-Rice)")
+
+    freq_mhz = st.number_input("Frecuencia (MHz)", value=100.1)
+    erp_kw = st.number_input("ERP (kW)", value=1.0, min_value=0.01)
+    tx_h_m = st.number_input("Altura antena TX (m)", value=100.0)
+    campo_obj = st.number_input("Campo objetivo (dBµV/m)", value=54.0)
+
+    paso_km = st.number_input("Paso radial (km)", value=1.0, min_value=0.2)
+    max_km = st.number_input("Distancia máxima (km)", value=300.0)
+
+    if st.button("Calcular contorno ITM"):
+
+        azs = np.arange(0, 360, 5)
+        puntos = []
+
+        for az in azs:
+            d = paso_km
+            while d <= max_km:
+                e = campo_itm_dbuvm(
+                    freq_mhz,
+                    erp_kw,
+                    d,
+                    tx_h_m
+                )
+                if e <= campo_obj:
+                    la, lo = destination_point(lat, lon, az, d * 1000)
+                    puntos.append([la, lo])
+                    break
+                d += paso_km
+
+        if len(puntos) < 5:
+            st.error("No se pudo cerrar el contorno.")
+            st.stop()
+
+        m = folium.Map(location=[lat, lon], zoom_start=8)
+        folium.Marker(
+            [lat, lon],
+            tooltip="Transmisor",
+            icon=folium.Icon(color="red")
+        ).add_to(m)
+
+        folium.Polygon(
+            locations=puntos,
+            color="blue",
+            fill=True,
+            fill_opacity=0.3,
+            tooltip="Cobertura ITM"
+        ).add_to(m)
+
+        st.success(
+            f"Contorno ITM calculado para {campo_obj} dBµV/m"
+        )
+
+        st_folium(m, height=520)
+        st.caption(
+    "Cobertura estimada mediante el modelo ITM (Longley-Rice). "
+    "No sustituye el contorno FCC F(50,50) normativo."
+)
+
 
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
