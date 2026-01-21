@@ -24,28 +24,6 @@ import plotly.graph_objects as go
 import srtm
 
 # ------------------------------------------------------------
-# CONTORNO FCC F(50,50) – MODELO APROXIMADO (FM)
-# ------------------------------------------------------------
-
-def distancia_fcc_aproximada(erp_kw, haat_m, campo_db):
-    """
-    Cálculo aproximado del contorno FCC F(50,50) para FM.
-    Devuelve distancia en km.
-    """
-
-    if erp_kw <= 0 or haat_m <= 0:
-        return 0.0
-
-    d_km = (
-        1.06
-        * math.sqrt(erp_kw)
-        * (haat_m ** 0.25)
-        * (10 ** ((106.92 - campo_db) / 40))
-    )
-
-    return float(d_km)
-
-# ------------------------------------------------------------
 # CONFIGURACIÓN GENERAL
 # ------------------------------------------------------------
 
