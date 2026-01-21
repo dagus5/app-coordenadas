@@ -298,9 +298,6 @@ def cargar_curvas_fcc():
 
 
 def distancia_fcc_f5050(erp_kw, haat_m, campo_db, df):
-    """
-    Calcula distancia FCC F(50,50) por interpolación real.
-    """
 
     campo_1kw = campo_db + 10 * math.log10(erp_kw)
 
@@ -316,11 +313,17 @@ def distancia_fcc_f5050(erp_kw, haat_m, campo_db, df):
 
     def interp_dist(h):
         sub = df[df["haat_m"] == h].sort_values("field_dbu_1kw")
-        return np.interp(
-            campo_1kw,
-            sub["field_dbu_1kw"][::-1],
-            sub["distance_km"][::-1]
-        )
+
+        campos = sub["field_dbu_1kw"].values
+        dist = sub["distance_km"].values
+
+        # 🔴 CLIP FCC: no extrapolar fuera de la curva
+        if campo_1kw >= campos.max():
+            return dist[0]        # campo fuerte → distancia corta
+        if campo_1kw <= campos.min():
+            return dist[-1]       # campo débil → último punto válido
+
+        return np.interp(campo_1kw, campos[::-1], dist[::-1])
 
     d1 = interp_dist(h1)
     d2 = interp_dist(h2)
