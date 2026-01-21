@@ -625,17 +625,7 @@ elif categoria == "Contorno FCC":
         value=54.0
     )
 
-    if st.button("Calcular contorno FCC"):
-        curvas = cargar_curvas_fcc()
-
-        d_km = distancia_fcc_f5050(
-            erp_kw=erp_kw,
-            haat_m=haat_m,
-            campo_db=campo_db,
-            df=curvas
-        )
-
-     
+       
 st.success(f"📏 Distancia del contorno: **{d_km:.2f} km**")
 
 # ------------------------------------------------------------
