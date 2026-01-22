@@ -596,7 +596,7 @@ elif categoria == "Factor de Ajuste (PER)":
 
     st.markdown("---")
 
-    C = constante_c_freq(freq)
+    C = constante_c_freq(servicio)
     delta_f = correccion_irregularidad(delta_h, freq, C)
     fcp = per_kw_a_dbk(per_kw)
     Eueq = campo_equivalente(Eu, delta_f, fcp)
