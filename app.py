@@ -48,14 +48,45 @@ if "deltaH_state" not in st.session_state:
 # FUNCIONES – FACTOR DE AJUSTE (PER)
 # ------------------------------------------------------------
 
-def constante_c_freq(freq):
-    # C = SI(freq>300;4.8;SI(freq<108;1.9;2.5))
-    if freq > 300:
-        return 4.8
-    elif freq < 108:
-        return 1.9
-    else:
-        return 2.5
+def correccion_irregularidad(delta_h, freq, C):
+    """
+    Corrección por Irregularidad del Terreno (ΔF = Fcd)
+    Si Δh ≤ 50 m → ΔF = 0
+    ΔF = C - 0.03 * Δh * (1 + freq / 300)
+    """
+    if delta_h <= 50:
+        return 0.0
+    return C - 0.03 * delta_h * (1 + freq / 300.0)
+
+
+def per_kw_a_dbk(per_kw):
+    """
+    PER en kW → dBk
+    Fcp = 10 log10(kW)
+    """
+    return 10.0 * math.log10(per_kw)
+
+
+def campo_equivalente(Eu, delta_f, fcp):
+    """
+    Intensidad de Campo Utilizable Equivalente
+    Eueq = Eu + |ΔF| - Fcp
+    """
+    return Eu + abs(delta_f) - fcp
+
+
+def per_ajustada_dbk(Eu, Eueq):
+    """
+    PER ajustada en dBk
+    """
+    return Eu - Eueq
+
+
+def dbk_a_kw(dbk):
+    """
+    dBk → kW
+    """
+    return 10 ** (dbk / 10.0)
 
 # ------------------------------------------------------------
 # FUNCIONES GEO Y CONVERSIONES
