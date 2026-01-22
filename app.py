@@ -58,12 +58,12 @@ def constante_c(freq):
         return 2.5
 
 
-def correccion_irregularidad(delta_h, freq_mhz, C):
+def correccion_irregularidad(delta_h, freq, C):
     # ΔF = Fcd
     # Si Δh ≤ 50 → ΔF = 0
     if delta_h <= 50:
         return 0.0
-    return C - 0.03 * delta_h * (1 + freq_mhz / 300)
+    return C - 0.03 * delta_h * (1 + freq / 300)
 
 
 def per_kw_a_dbk(per_kw):
