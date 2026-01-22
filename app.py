@@ -595,22 +595,7 @@ elif categoria == "Factor de Ajuste (PER)":
     )
 
     st.markdown("---")
-    
-    st.success(f"### 🔹 PER ajustada = {per_adj_kw:.4f} kW")
-
-    resumen = pd.DataFrame([{
-        "Frecuencia (MHz)": freq,
-        "Constante C": C,
-        "Δh (m)": delta_h,
-        "ΔF (dB)": delta_f,
-        "PER ingresada (kW)": per_kw,
-        "Fcp (dBk)": fcp,
-        "Eu (dBµ)": Eu,
-        "Eueq (dBµ)": Eueq,
-        "PER ajustada (dBk)": per_adj_dbk,
-        "PER ajustada (kW)": per_adj_kw
-    }])
-
+        
     st.dataframe(resumen, use_container_width=True)
 
 
