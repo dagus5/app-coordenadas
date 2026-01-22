@@ -595,8 +595,6 @@ elif categoria == "Factor de Ajuste (PER)":
     )
 
     st.markdown("---")
-
-    C = constante_c_freq(freq)
     
     st.success(f"### 🔹 PER ajustada = {per_adj_kw:.4f} kW")
 
