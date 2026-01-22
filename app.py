@@ -564,15 +564,9 @@ elif categoria == "Δh – Rugosidad":
             "paso": paso_m,
         }
 
-# ------------------------------------------------------------
-# FACTOR DE AJUSTE (PER)
-# ------------------------------------------------------------
-
 elif categoria == "Factor de Ajuste (PER)":
 
     st.subheader("📡 Factor de Ajuste – Potencia Efectiva Radiada (PER)")
-
-    st.markdown("### Datos de entrada")
 
     freq = st.number_input(
         "Frecuencia (MHz) – FM o TV",
@@ -598,62 +592,31 @@ elif categoria == "Factor de Ajuste (PER)":
     )
 
     st.markdown("---")
-    st.markdown("### Cálculos")
 
-    # 1. Constante C
-    C = constante_c(freq)
-    st.write(f"**Constante C:** {C}")
-
-    # 2. Corrección por irregularidad
+    C = constante_c_freq(freq)
     delta_f = correccion_irregularidad(delta_h, freq, C)
-    st.write(f"**ΔF – Corrección por terreno:** {delta_f:.3f} dB")
-
-    # 3. PER en dBk
     fcp = per_kw_a_dbk(per_kw)
-    st.write(f"**PER en el acimut evaluado (Fcp):** {fcp:.3f} dBk")
-
-    # 4. Campo equivalente
     Eueq = campo_equivalente(Eu, delta_f, fcp)
-    st.write(f"**Intensidad de Campo Utilizable Equivalente (Eueq):** {Eueq:.3f} dBµ")
-
-    # 5. PER ajustada
     per_adj_dbk = per_ajustada_dbk(Eu, Eueq)
     per_adj_kw = dbk_a_kw(per_adj_dbk)
 
     st.success(f"### 🔹 PER ajustada = {per_adj_kw:.4f} kW")
 
-    st.markdown("---")
-
-    st.info(
-        "La **PER ajustada** obtenida debe utilizarse como **entrada** "
-        "en la herramienta oficial de curvas FCC (F(50,50)).\n\n"
-        "Este módulo no calcula contornos ni distancias; "
-        "solo realiza el ajuste normativo de potencia."
-    )
-
-    # Resumen
     resumen = pd.DataFrame([{
         "Frecuencia (MHz)": freq,
         "Constante C": C,
         "Δh (m)": delta_h,
         "ΔF (dB)": delta_f,
         "PER ingresada (kW)": per_kw,
-        "Fcp – PER (dBk)": fcp,
+        "Fcp (dBk)": fcp,
         "Eu (dBµ)": Eu,
         "Eueq (dBµ)": Eueq,
         "PER ajustada (dBk)": per_adj_dbk,
         "PER ajustada (kW)": per_adj_kw
     }])
 
-    st.subheader("Resumen del cálculo")
     st.dataframe(resumen, use_container_width=True)
 
-    st.download_button(
-        "Descargar resumen – Factor de Ajuste (PER)",
-        resumen.to_csv(index=False).encode("utf-8"),
-        "Factor_Ajuste_PER.csv",
-        "text/csv"
-    )
 
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
