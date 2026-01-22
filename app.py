@@ -595,6 +595,69 @@ elif categoria == "Factor de Ajuste (PER)":
     )
 
     st.markdown("---")
+elif categoria == "Factor de Ajuste (PER)":
+
+    st.subheader("📡 Factor de Ajuste – Potencia Efectiva Radiada (PER)")
+
+    freq = st.number_input(
+        "Frecuencia (MHz) – FM o TV",
+        min_value=1.0,
+        value=102.3
+    )
+
+    delta_h = st.number_input(
+        "Δh – Irregularidad del terreno (m)",
+        min_value=0.0,
+        value=100.0
+    )
+
+    per_kw = st.number_input(
+        "Potencia Efectiva Radiada – PER (kW)",
+        min_value=0.0001,
+        value=26.728
+    )
+
+    Eu = st.number_input(
+        "Intensidad de Campo Nominal Utilizable – Eu (dBµ)",
+        value=54.0
+    )
+
+    st.markdown("---")
+
+    # ================== CÁLCULOS ==================
+
+    # Constante C según frecuencia
+    if freq > 300:
+        C = 4.8
+    elif freq < 108:
+        C = 1.9
+    else:
+        C = 2.5
+
+    delta_f = correccion_irregularidad(delta_h, freq, C)
+    fcp = per_kw_a_dbk(per_kw)
+    Eueq = campo_equivalente(Eu, delta_f, fcp)
+    per_adj_dbk = per_ajustada_dbk(Eu, Eueq)
+    per_adj_kw = dbk_a_kw(per_adj_dbk)
+
+    # ================== RESULTADOS ==================
+
+    st.success(f"### 🔹 PER ajustada = {per_adj_kw:.4f} kW")
+
+    resumen = pd.DataFrame([{
+        "Frecuencia (MHz)": freq,
+        "Constante C": C,
+        "Δh (m)": delta_h,
+        "ΔF (dB)": delta_f,
+        "PER ingresada (kW)": per_kw,
+        "Fcp (dBk)": fcp,
+        "Eu (dBµ)": Eu,
+        "Eueq (dBµ)": Eueq,
+        "PER ajustada (dBk)": per_adj_dbk,
+        "PER ajustada (kW)": per_adj_kw
+    }])
+
+    st.dataframe(resumen, use_container_width=True)
         
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
