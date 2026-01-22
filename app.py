@@ -596,13 +596,8 @@ elif categoria == "Factor de Ajuste (PER)":
 
     st.markdown("---")
 
-    C = constante_c_freq(servicio)
-    delta_f = correccion_irregularidad(delta_h, freq, C)
-    fcp = per_kw_a_dbk(per_kw)
-    Eueq = campo_equivalente(Eu, delta_f, fcp)
-    per_adj_dbk = per_ajustada_dbk(Eu, Eueq)
-    per_adj_kw = dbk_a_kw(per_adj_dbk)
-
+    C = constante_c_freq(freq)
+    
     st.success(f"### 🔹 PER ajustada = {per_adj_kw:.4f} kW")
 
     resumen = pd.DataFrame([{
