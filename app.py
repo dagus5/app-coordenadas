@@ -22,6 +22,9 @@ import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
 import srtm
+import math
+import pandas as pd
+import streamlit as st
 
 # ------------------------------------------------------------
 # CONFIGURACIÓN GENERAL
@@ -322,7 +325,7 @@ if c5.button("🌄 Δh – Rugosidad"):
 if c6.button("📡 Factor de Ajuste (PER)"):
     st.session_state.categoria = "Factor de Ajuste (PER)"
 
-
+categoria = st.session_state.get("categoria", "")
 categoria = st.session_state.categoria
 st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
 
@@ -518,127 +521,136 @@ elif categoria == "Δh – Rugosidad":
             "paso": paso_m,
         }
 # ------------------------------------------------------------
-# Factor de Ajuste (PER) (POST-CÁLCULO NORMATIVO)
+# FACTOR DE AJUSTE (PER)
 # ------------------------------------------------------------
 
-elif categoria == "Campo FCC / ASEP":
+elif categoria == "Factor de Ajuste (PER)":
 
-    st.subheader("📡 Cálculo de Intensidad de Campo – FCC / ASEP")
+    st.subheader("📡 Factor de Ajuste – Potencia Efectiva Radiada (PER)")
 
     st.markdown("### Datos de entrada")
 
-    f_mhz = st.number_input(
-        "Frecuencia central (MHz)",
-        value=102.3,
-        min_value=1.0
+    freq = st.number_input(
+        "Frecuencia (MHz) – FM o TV",
+        min_value=1.0,
+        value=102.3
     )
-
-    servicio = st.selectbox(
-        "Servicio / Banda",
-        ["FM y Canales 2-6", "Canales 7-13", "Canales 14-69"]
-    )
-
-    az_eval = st.number_input(
-        "Azimut de evaluación (°)",
-        value=145.0,
-        min_value=0.0,
-        max_value=360.0
-    )
-
-    # Si existe Δh calculado previamente, sugerir promedio
-    delta_h_default = 0.0
-    if st.session_state.deltaH_state:
-        try:
-            delta_h_default = float(
-                st.session_state.deltaH_state["df"]["Δh (m)"].mean()
-            )
-        except:
-            pass
 
     delta_h = st.number_input(
-        "Δh – Rugosidad del terreno (m)",
-        value=round(delta_h_default, 2),
-        min_value=0.0
+        "Δh – Irregularidad del terreno (m)",
+        min_value=0.0,
+        value=100.0
     )
 
     per_kw = st.number_input(
         "Potencia Efectiva Radiada – PER (kW)",
-        value=26.728,
-        min_value=0.0
+        min_value=0.0001,
+        value=26.728
     )
 
-    haat_m = st.number_input(
-        "HAAT – Altura promedio sobre el terreno (m)",
-        value=282.0,
-        min_value=0.0
-    )
-
-    eu = st.number_input(
-        "Intensidad de Campo Nominal Utilizable Eu (dBµ)",
+    Eu = st.number_input(
+        "Intensidad de Campo Nominal Utilizable – Eu (dBµ)",
         value=54.0
     )
 
     st.markdown("---")
     st.markdown("### Cálculos")
 
-    # Constante C
-    C = constante_c(servicio)
-    st.write(f"**Constante C:** {C} dBµ")
+    # 1. Constante C
+    C = constante_c(freq)
+    st.write(f"**Constante C:** {C}")
 
-    # Corrección por irregularidad del terreno
-    if delta_h <= 50:
-        delta_f = 0.0
-        st.caption("Δh ≤ 50 m → ΔF = 0 (según norma)")
-    else:
-        delta_f = -C * 0.03 * delta_h * (1 + f_mhz / 300)
+    # 2. Corrección por irregularidad
+    delta_f = correccion_irregularidad(delta_h, freq, C)
+    st.write(f"**ΔF – Corrección por terreno:** {delta_f:.3f} dB")
 
-    st.write(f"**ΔF – Corrección por terreno:** {delta_f:.2f} dB")
+    # 3. PER en dBk
+    fcp = per_kw_a_dbk(per_kw)
+    st.write(f"**PER en el acimut evaluado (Fcp):** {fcp:.3f} dBk")
 
-    # PER en dBk
-    if per_kw > 0:
-        per_dbk = 10 * math.log10(per_kw)
-    else:
-        per_dbk = float("-inf")
+    # 4. Campo equivalente
+    Eueq = campo_equivalente(Eu, delta_f, fcp)
+    st.write(f"**Intensidad de Campo Utilizable Equivalente (Eueq):** {Eueq:.3f} dBµ")
 
-    st.write(f"**PER:** {per_dbk:.4f} dBk")
+    # 5. PER ajustada
+    per_adj_dbk = per_ajustada_dbk(Eu, Eueq)
+    per_adj_kw = dbk_a_kw(per_adj_dbk)
 
-    # Intensidad de campo utilizable equivalente
-    eueq = eu + abs(delta_f) - per_dbk
-    st.write(f"### 🔹 Eueq = {eueq:.2f} dBµ")
+    st.success(f"### 🔹 PER ajustada = {per_adj_kw:.4f} kW")
 
     st.markdown("---")
 
     st.info(
-        "El valor de **Eueq** debe buscarse en la **curva FCC F(50,50)** "
-        "utilizando el **HAAT calculado**.\n\n"
-        "Este módulo **NO sustituye** el contorno normativo FCC, "
-        "solo reproduce el procedimiento normativo usado por ASEP."
+        "La **PER ajustada** obtenida debe utilizarse como **entrada** "
+        "en la herramienta oficial de curvas FCC (F(50,50)).\n\n"
+        "Este módulo no calcula contornos ni distancias; "
+        "solo realiza el ajuste normativo de potencia."
     )
 
-    # Resumen tipo Excel
+    # Resumen
     resumen = pd.DataFrame([{
-        "Frecuencia (MHz)": f_mhz,
-        "Servicio": servicio,
-        "C": C,
-        "Azimut (°)": az_eval,
+        "Frecuencia (MHz)": freq,
+        "Constante C": C,
         "Δh (m)": delta_h,
         "ΔF (dB)": delta_f,
-        "PER (kW)": per_kw,
-        "PER (dBk)": per_dbk,
-        "HAAT (m)": haat_m,
-        "Eu (dBµ)": eu,
-        "Eueq (dBµ)": eueq
+        "PER ingresada (kW)": per_kw,
+        "Fcp – PER (dBk)": fcp,
+        "Eu (dBµ)": Eu,
+        "Eueq (dBµ)": Eueq,
+        "PER ajustada (dBk)": per_adj_dbk,
+        "PER ajustada (kW)": per_adj_kw
     }])
 
-    st.subheader("Resumen de cálculo")
+    st.subheader("Resumen del cálculo")
     st.dataframe(resumen, use_container_width=True)
 
     st.download_button(
-        "Descargar resumen Factor de Ajuste (PER) (CSV)",
+        "Descargar resumen – Factor de Ajuste (PER)",
         resumen.to_csv(index=False).encode("utf-8"),
-        "Factor de Ajuste (PER)".csv",
+        "Factor_Ajuste_PER.csv",
         "text/csv"
     )
+
+# ------------------------------------------------------------
+# FUNCIONES – FACTOR DE AJUSTE (PER)
+# ------------------------------------------------------------
+
+def constante_c(freq_mhz):
+    # C = SI(freq>300;4.8;SI(freq<108;1.9;2.5))
+    if freq_mhz > 300:
+        return 4.8
+    elif freq_mhz < 108:
+        return 1.9
+    else:
+        return 2.5
+
+
+def correccion_irregularidad(delta_h, freq_mhz, C):
+    # ΔF = Fcd
+    # Si Δh ≤ 50 → ΔF = 0
+    if delta_h <= 50:
+        return 0.0
+    return C - 0.03 * delta_h * (1 + freq_mhz / 300)
+
+
+def per_kw_a_dbk(per_kw):
+    # Fcp = 10 log10 (kW)
+    return 10 * math.log10(per_kw)
+
+
+def campo_equivalente(Eu, delta_f, fcp):
+    # Eueq = Eu + |ΔF| - Fcp
+    return Eu + abs(delta_f) - fcp
+
+
+def per_ajustada_dbk(Eu, Eueq):
+    # PER ajustada (dBk)
+    return Eu - Eueq
+
+
+def dbk_a_kw(dbk):
+    # dBk → kW
+    return 10 ** (dbk / 10)
 
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
