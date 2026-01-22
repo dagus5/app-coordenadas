@@ -50,9 +50,9 @@ if "deltaH_state" not in st.session_state:
 
 def constante_c(freq):
     # C = SI(freq>300;4.8;SI(freq<108;1.9;2.5))
-    if freq_mhz > 300:
+    if freq > 300:
         return 4.8
-    elif freq_mhz < 108:
+    elif freq < 108:
         return 1.9
     else:
         return 2.5
