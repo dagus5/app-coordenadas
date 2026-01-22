@@ -596,9 +596,6 @@ elif categoria == "Factor de Ajuste (PER)":
 
     st.markdown("---")
         
-    st.dataframe(resumen, use_container_width=True)
-
-
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
 # ------------------------------------------------------------
