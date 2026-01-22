@@ -47,6 +47,47 @@ if "deltaH_state" not in st.session_state:
     st.session_state.deltaH_state = None
 
 # ------------------------------------------------------------
+# FUNCIONES – FACTOR DE AJUSTE (PER)
+# ------------------------------------------------------------
+
+def constante_c(freq_mhz):
+    # C = SI(freq>300;4.8;SI(freq<108;1.9;2.5))
+    if freq_mhz > 300:
+        return 4.8
+    elif freq_mhz < 108:
+        return 1.9
+    else:
+        return 2.5
+
+
+def correccion_irregularidad(delta_h, freq_mhz, C):
+    # ΔF = Fcd
+    # Si Δh ≤ 50 → ΔF = 0
+    if delta_h <= 50:
+        return 0.0
+    return C - 0.03 * delta_h * (1 + freq_mhz / 300)
+
+
+def per_kw_a_dbk(per_kw):
+    # Fcp = 10 log10 (kW)
+    return 10 * math.log10(per_kw)
+
+
+def campo_equivalente(Eu, delta_f, fcp):
+    # Eueq = Eu + |ΔF| - Fcp
+    return Eu + abs(delta_f) - fcp
+
+
+def per_ajustada_dbk(Eu, Eueq):
+    # PER ajustada (dBk)
+    return Eu - Eueq
+
+
+def dbk_a_kw(dbk):
+    # dBk → kW
+    return 10 ** (dbk / 10)
+
+# ------------------------------------------------------------
 # FUNCIONES GEO Y CONVERSIONES
 # ------------------------------------------------------------
 
@@ -520,6 +561,7 @@ elif categoria == "Δh – Rugosidad":
             "profiles": profiles_dict,
             "paso": paso_m,
         }
+
 # ------------------------------------------------------------
 # FACTOR DE AJUSTE (PER)
 # ------------------------------------------------------------
@@ -610,47 +652,6 @@ elif categoria == "Factor de Ajuste (PER)":
         "Factor_Ajuste_PER.csv",
         "text/csv"
     )
-
-# ------------------------------------------------------------
-# FUNCIONES – FACTOR DE AJUSTE (PER)
-# ------------------------------------------------------------
-
-def constante_c(freq_mhz):
-    # C = SI(freq>300;4.8;SI(freq<108;1.9;2.5))
-    if freq_mhz > 300:
-        return 4.8
-    elif freq_mhz < 108:
-        return 1.9
-    else:
-        return 2.5
-
-
-def correccion_irregularidad(delta_h, freq_mhz, C):
-    # ΔF = Fcd
-    # Si Δh ≤ 50 → ΔF = 0
-    if delta_h <= 50:
-        return 0.0
-    return C - 0.03 * delta_h * (1 + freq_mhz / 300)
-
-
-def per_kw_a_dbk(per_kw):
-    # Fcp = 10 log10 (kW)
-    return 10 * math.log10(per_kw)
-
-
-def campo_equivalente(Eu, delta_f, fcp):
-    # Eueq = Eu + |ΔF| - Fcp
-    return Eu + abs(delta_f) - fcp
-
-
-def per_ajustada_dbk(Eu, Eueq):
-    # PER ajustada (dBk)
-    return Eu - Eueq
-
-
-def dbk_a_kw(dbk):
-    # dBk → kW
-    return 10 ** (dbk / 10)
 
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
