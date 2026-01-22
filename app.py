@@ -285,6 +285,14 @@ RANGO_METODO = {
     "FCC (3–16 km)": "3–16",
     "0–50 km completo": "0–50",
 }
+def constante_c(servicio):
+    if servicio == "FM y Canales 2-6":
+        return 1.9
+    elif servicio == "Canales 7-13":
+        return 2.5
+    elif servicio == "Canales 14-69":
+        return 4.8
+    return None
 
 # ------------------------------------------------------------
 # MENÚ/MOSAICO DE CATEGORÍAS
@@ -294,7 +302,7 @@ st.markdown("### Selecciona una categoría")
 
 c1, c2 = st.columns(2)
 c3, c4 = st.columns(2)
-c5, _ = st.columns(2)
+c5, c6 = st.columns(2)
 
 if c1.button("📍 Cálculo - 8 Radiales"):
     st.session_state.categoria = "Cálculo - 8 Radiales"
@@ -310,6 +318,10 @@ if c4.button("🗺️ Cálculo de Distancia Central"):
 
 if c5.button("🌄 Δh – Rugosidad"):
     st.session_state.categoria = "Δh – Rugosidad"
+
+if c6.button("📡 Factor de Ajuste (PER)"):
+    st.session_state.categoria = "Factor de Ajuste (PER)"
+
 
 categoria = st.session_state.categoria
 st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
@@ -505,6 +517,128 @@ elif categoria == "Δh – Rugosidad":
             "profiles": profiles_dict,
             "paso": paso_m,
         }
+# ------------------------------------------------------------
+# Factor de Ajuste (PER) (POST-CÁLCULO NORMATIVO)
+# ------------------------------------------------------------
+
+elif categoria == "Campo FCC / ASEP":
+
+    st.subheader("📡 Cálculo de Intensidad de Campo – FCC / ASEP")
+
+    st.markdown("### Datos de entrada")
+
+    f_mhz = st.number_input(
+        "Frecuencia central (MHz)",
+        value=102.3,
+        min_value=1.0
+    )
+
+    servicio = st.selectbox(
+        "Servicio / Banda",
+        ["FM y Canales 2-6", "Canales 7-13", "Canales 14-69"]
+    )
+
+    az_eval = st.number_input(
+        "Azimut de evaluación (°)",
+        value=145.0,
+        min_value=0.0,
+        max_value=360.0
+    )
+
+    # Si existe Δh calculado previamente, sugerir promedio
+    delta_h_default = 0.0
+    if st.session_state.deltaH_state:
+        try:
+            delta_h_default = float(
+                st.session_state.deltaH_state["df"]["Δh (m)"].mean()
+            )
+        except:
+            pass
+
+    delta_h = st.number_input(
+        "Δh – Rugosidad del terreno (m)",
+        value=round(delta_h_default, 2),
+        min_value=0.0
+    )
+
+    per_kw = st.number_input(
+        "Potencia Efectiva Radiada – PER (kW)",
+        value=26.728,
+        min_value=0.0
+    )
+
+    haat_m = st.number_input(
+        "HAAT – Altura promedio sobre el terreno (m)",
+        value=282.0,
+        min_value=0.0
+    )
+
+    eu = st.number_input(
+        "Intensidad de Campo Nominal Utilizable Eu (dBµ)",
+        value=54.0
+    )
+
+    st.markdown("---")
+    st.markdown("### Cálculos")
+
+    # Constante C
+    C = constante_c(servicio)
+    st.write(f"**Constante C:** {C} dBµ")
+
+    # Corrección por irregularidad del terreno
+    if delta_h <= 50:
+        delta_f = 0.0
+        st.caption("Δh ≤ 50 m → ΔF = 0 (según norma)")
+    else:
+        delta_f = -C * 0.03 * delta_h * (1 + f_mhz / 300)
+
+    st.write(f"**ΔF – Corrección por terreno:** {delta_f:.2f} dB")
+
+    # PER en dBk
+    if per_kw > 0:
+        per_dbk = 10 * math.log10(per_kw)
+    else:
+        per_dbk = float("-inf")
+
+    st.write(f"**PER:** {per_dbk:.4f} dBk")
+
+    # Intensidad de campo utilizable equivalente
+    eueq = eu + abs(delta_f) - per_dbk
+    st.write(f"### 🔹 Eueq = {eueq:.2f} dBµ")
+
+    st.markdown("---")
+
+    st.info(
+        "El valor de **Eueq** debe buscarse en la **curva FCC F(50,50)** "
+        "utilizando el **HAAT calculado**.\n\n"
+        "Este módulo **NO sustituye** el contorno normativo FCC, "
+        "solo reproduce el procedimiento normativo usado por ASEP."
+    )
+
+    # Resumen tipo Excel
+    resumen = pd.DataFrame([{
+        "Frecuencia (MHz)": f_mhz,
+        "Servicio": servicio,
+        "C": C,
+        "Azimut (°)": az_eval,
+        "Δh (m)": delta_h,
+        "ΔF (dB)": delta_f,
+        "PER (kW)": per_kw,
+        "PER (dBk)": per_dbk,
+        "HAAT (m)": haat_m,
+        "Eu (dBµ)": eu,
+        "Eueq (dBµ)": eueq
+    }])
+
+    st.subheader("Resumen de cálculo")
+    st.dataframe(resumen, use_container_width=True)
+
+    st.download_button(
+        "Descargar resumen Factor de Ajuste (PER) (CSV)",
+        resumen.to_csv(index=False).encode("utf-8"),
+        "Factor de Ajuste (PER)".csv",
+        "text/csv"
+    )
 
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
