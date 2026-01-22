@@ -22,9 +22,7 @@ import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
 import srtm
-import math
-import pandas as pd
-import streamlit as st
+
 
 # ------------------------------------------------------------
 # CONFIGURACIÓN GENERAL
@@ -50,7 +48,7 @@ if "deltaH_state" not in st.session_state:
 # FUNCIONES – FACTOR DE AJUSTE (PER)
 # ------------------------------------------------------------
 
-def constante_c(freq_mhz):
+def constante_c(freq):
     # C = SI(freq>300;4.8;SI(freq<108;1.9;2.5))
     if freq_mhz > 300:
         return 4.8
@@ -374,7 +372,11 @@ st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
 # COORDENADAS BASE
 # ------------------------------------------------------------
 
-lat, lon = input_coords(key_prefix=f"{categoria}_base")
+if categoria != "Factor de Ajuste (PER)":
+    lat, lon = input_coords(key_prefix=f"{categoria}_base")
+else:
+    lat = lon = None
+
 
 # ------------------------------------------------------------
 # CÁLCULOS SEGÚN CATEGORÍA
