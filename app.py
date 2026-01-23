@@ -54,7 +54,7 @@ def correccion_irregularidad(delta_h, freq, C):
     Si Δh ≤ 50 m → ΔF = 0
     ΔF = C - 0.03 * Δh * (1 + freq / 300)
     """
-    if delta_h <= 50:
+    if delta_h <= 0:
         return 0.0
     return C - 0.03 * delta_h * (1 + freq / 300.0)
 
@@ -627,18 +627,51 @@ elif categoria == "Factor de Ajuste (PER)":
     # ================== CÁLCULOS ==================
 
     # Constante C según frecuencia
-    if freq > 300:
-        C = 4.8
-    elif freq < 108:
-        C = 1.9
-    else:
-        C = 2.5
+  elif categoria == "Factor de Ajuste (PER)":
 
-    delta_f = correccion_irregularidad(delta_h, freq, C)
-    fcp = per_kw_a_dbk(per_kw)
-    Eueq = campo_equivalente(Eu, delta_f, fcp)
-    per_adj_dbk = per_ajustada_dbk(Eu, Eueq)
-    per_adj_kw = dbk_a_kw(per_adj_dbk)
+    st.subheader("📡 Factor de Ajuste – Potencia Efectiva Radiada (PER)")
+
+    freq = st.number_input("Frecuencia (MHz)", min_value=1.0, value=102.3)
+    delta_h = st.number_input("Δh – Irregularidad del terreno (m)", min_value=0.0, value=100.0)
+    per_kw = st.number_input("PER ingresada (kW)", min_value=0.0001, value=1.0)
+    Eu = st.number_input("Campo nominal Eu (dBµ)", value=54.0)
+
+    if st.button("🧮 Calcular PER ajustada"):
+
+        try:
+            # Constante C
+            if freq > 300:
+                C = 4.8
+            elif freq < 108:
+                C = 1.9
+            else:
+                C = 2.5
+
+            delta_f = correccion_irregularidad(delta_h, freq, C)
+            fcp = per_kw_a_dbk(per_kw)
+            Eueq = campo_equivalente(Eu, delta_f, fcp)
+            per_adj_dbk = per_ajustada_dbk(Eu, Eueq)
+            per_adj_kw = dbk_a_kw(per_adj_dbk)
+
+            st.success(f"✅ PER ajustada = {per_adj_kw:.4f} kW")
+
+            st.write({
+                "Frecuencia (MHz)": freq,
+                "Constante C": C,
+                "Δh (m)": delta_h,
+                "ΔF (dB)": delta_f,
+                "PER original (kW)": per_kw,
+                "Fcp (dBk)": fcp,
+                "Eu (dBµ)": Eu,
+                "Eueq (dBµ)": Eueq,
+                "PER ajustada (dBk)": per_adj_dbk,
+                "PER ajustada (kW)": per_adj_kw
+            })
+
+        except Exception as e:
+            st.error("❌ Error en el cálculo")
+            st.exception(e)
+
 
     # ================== RESULTADOS ==================
 
