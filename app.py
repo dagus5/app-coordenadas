@@ -585,39 +585,39 @@ if categoria == "Δh – Rugosidad" and st.session_state.deltaH_state:
         st.markdown(f"**Δh promedio:** {df['Δh (m)'].mean():.2f} m")
 
     az_sel = st.selectbox("Ver perfil:", df["Azimut (°)"])
-    prof = profiles.get(az_sel)
+    prof = profiles.get(az_sel, None)  # Asegurarse de que prof no sea None si az_sel no está en profiles
 
-if prof is not None:
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=prof["Distancia (km)"],
-        y=prof["Elevación (m)"],
-        mode="lines",
-        name=f"Perfil {az_sel}°"
-    ))
-    if not prof["Elevación (m)"].isnull().all():
-        fig.add_hline(y=prof["Elevación (m)"].quantile(0.9), line_dash="dash", line_color="red",
-                     annotation_text=f"h90: {prof['Elevación (m)'].quantile(0.9):.2f} m")
-        fig.add_hline(y=prof["Elevación (m)"].quantile(0.1), line_dash="dash", line_color="green",
-                     annotation_text=f"h10: {prof['Elevación (m)'].quantile(0.1):.2f} m")
-    fig.update_layout(
-        title=f"Perfil de Terreno — Azimut {az_sel}° (0–50 km)",
-        xaxis_title="Distancia (km)",
-        yaxis_title="Elevación (m)"
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
+    if prof is not None and not prof.empty:  # Verificar que prof no sea None y no esté vacío
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=prof["Distancia (km)"],
+            y=prof["Elevación (m)"],
+            mode="lines",
+            name=f"Perfil {az_sel}°"
+        ))
+        if not prof["Elevación (m)"].isnull().all():
+            fig.add_hline(y=prof["Elevación (m)"].quantile(0.9), line_dash="dash", line_color="red",
+                         annotation_text=f"h90: {prof['Elevación (m)'].quantile(0.9):.2f} m")
+            fig.add_hline(y=prof["Elevación (m)"].quantile(0.1), line_dash="dash", line_color="green",
+                         annotation_text=f"h10: {prof['Elevación (m)'].quantile(0.1):.2f} m")
+        fig.update_layout(
+            title=f"Perfil de Terreno — Azimut {az_sel}° (0–50 km)",
+            xaxis_title="Distancia (km)",
+            yaxis_title="Elevación (m)"
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
     m = folium.Map(location=[lat, lon], zoom_start=8)
     folium.Marker([lat, lon], tooltip="Transmisor",
                   icon=folium.Icon(color="red")).add_to(m)
 
     for az, prof in profiles.items():
-        pts = []
-        for dkm in prof["Distancia (km)"]:
-            la, lo = destination_point(lat, lon, az, dkm*1000)
-            pts.append([la, lo])
-        folium.PolyLine(pts, weight=3, opacity=0.85).add_to(m)
+        if prof is not None and not prof.empty:  # Verificar que prof no sea None y no esté vacío
+            pts = []
+            for dkm in prof["Distancia (km)"]:
+                la, lo = destination_point(lat, lon, az, dkm*1000)
+                pts.append([la, lo])
+            folium.PolyLine(pts, weight=3, opacity=0.85).add_to(m)
 
     st.subheader("Mapa de Radiales (0–50 km)")
     st_folium(m, width=None, height=520)
