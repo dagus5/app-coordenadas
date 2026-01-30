@@ -588,24 +588,25 @@ if categoria == "Δh – Rugosidad" and st.session_state.deltaH_state:
     prof = profiles.get(az_sel)
 
     if prof is not None:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=prof["Distancia (km)"],
-            y=prof["Elevación (m)"],
-            mode="lines",
-            name=f"Perfil {az_sel}°"
-        ))
-        if not prof["Elevación (m)"].isnull().all():
-            fig.add_hline(y=prof["Elevación (m)"].quantile(0.9), line_dash="dash", line_color="red",
-                         annotation_text=f"h90: {prof['Elevación (m)"].quantile(0.9):.2f} m"
-            fig.add_hline(y=prof["Elevación (m)"].quantile(0.1), line_dash="dash", line_color="green",
-                         annotation_text=f"h10: {prof['Elevación (m)"].quantile(0.1):.2f} m"
-        fig.update_layout(
-            title=f"Perfil de Terreno — Azimut {az_sel}° (0–50 km)",
-            xaxis_title="Distancia (km)",
-            yaxis_title="Elevación (m)"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=prof["Distancia (km)"],
+        y=prof["Elevación (m)"],
+        mode="lines",
+        name=f"Perfil {az_sel}°"
+    ))
+    if not prof["Elevación (m)"].isnull().all():
+        fig.add_hline(y=prof["Elevación (m)"].quantile(0.9), line_dash="dash", line_color="red",
+                     annotation_text=f"h90: {prof['Elevación (m)'].quantile(0.9):.2f} m")
+        fig.add_hline(y=prof["Elevación (m)"].quantile(0.1), line_dash="dash", line_color="green",
+                     annotation_text=f"h10: {prof['Elevación (m)'].quantile(0.1):.2f} m")
+    fig.update_layout(
+        title=f"Perfil de Terreno — Azimut {az_sel}° (0–50 km)",
+        xaxis_title="Distancia (km)",
+        yaxis_title="Elevación (m)"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
 
     m = folium.Map(location=[lat, lon], zoom_start=8)
     folium.Marker([lat, lon], tooltip="Transmisor",
