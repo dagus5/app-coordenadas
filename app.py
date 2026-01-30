@@ -284,6 +284,34 @@ RANGO_METODO = {
     "FCC (3–16 km)": "3–16",
     "0–50 km completo": "0–50",
 }
+# ------------------------------------------------------------
+# FACTOR DE AJUSTE (PER)
+# ------------------------------------------------------------
+
+def constante_c_freq(freq):
+    if freq > 300:
+        return 4.8
+    elif freq < 108:
+        return 1.9
+    else:
+        return 2.5
+
+def correccion_irregularidad(delta_h, freq, C):
+    if delta_h <= 50:
+        return 0.0
+    return C - 0.03 * delta_h * (1 + freq/300.0)
+
+def per_kw_a_dbk(per_kw):
+    return 10.0 * math.log10(per_kw)
+
+def campo_equivalente(Eu, delta_f, fcp):
+    return Eu + abs(delta_f) - fcp
+
+def per_ajustada_dbk(Eu, Eueq):
+    return Eu - Eueq
+
+def dbk_a_kw(dbk):
+    return 10 ** (dbk/10.0)
 
 # ------------------------------------------------------------
 # MENÚ/MOSAICO DE CATEGORÍAS
@@ -293,7 +321,7 @@ st.markdown("### Selecciona una categoría")
 
 c1, c2 = st.columns(2)
 c3, c4 = st.columns(2)
-c5, _ = st.columns(2)
+c5, c6 = st.columns(2)
 
 if c1.button("📍 Cálculo - 8 Radiales"):
     st.session_state.categoria = "Cálculo - 8 Radiales"
@@ -309,6 +337,10 @@ if c4.button("🗺️ Cálculo de Distancia Central"):
 
 if c5.button("🌄 Δh – Rugosidad"):
     st.session_state.categoria = "Δh – Rugosidad"
+
+if c6.button("📡 Factor de Ajuste (PER)"):
+    st.session_state.categoria = "Factor de Ajuste (PER)"
+
 
 categoria = st.session_state.categoria
 st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
@@ -504,6 +536,42 @@ elif categoria == "Δh – Rugosidad":
             "profiles": profiles_dict,
             "paso": paso_m,
         }
+# ------------------------------------------------------------
+# FACTOR DE AJUSTE (PER)
+# ------------------------------------------------------------
+
+elif categoria == "Factor de Ajuste (PER)":
+
+    st.subheader("Factor de Ajuste — Potencia Efectiva Radiada")
+
+    freq = st.number_input("Frecuencia (MHz)", value=100.0, min_value=1.0)
+    delta_h = st.number_input("Δh terreno (m)", value=50.0, min_value=0.0)
+    per_kw = st.number_input("PER (kW)", value=1.0, min_value=0.0001)
+    Eu = st.number_input("Eu — Intensidad de Campo Nominal (dBu)", value=60.0)
+
+    if st.button("Calcular PER ajustada"):
+
+        C = constante_c_freq(freq)
+        delta_f = correccion_irregularidad(delta_h, freq, C)
+        fcp = per_kw_a_dbk(per_kw)
+        Eueq = campo_equivalente(Eu, delta_f, fcp)
+        per_adj_dbk = per_ajustada_dbk(Eu, Eueq)
+        per_adj_kw = dbk_a_kw(per_adj_dbk)
+
+        df = pd.DataFrame([{
+            "Frecuencia (MHz)": freq,
+            "Constante C": C,
+            "Δh (m)": delta_h,
+            "ΔF": delta_f,
+            "PER original (kW)": per_kw,
+            "PER (dBk)": fcp,
+            "Eu (dBu)": Eu,
+            "Eueq (dBu)": Eueq,
+            "PER ajustada (dBk)": per_adj_dbk,
+            "PER ajustada (kW)": per_adj_kw
+        }])
+
+        st.session_state.resultados[categoria] = df
 
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
