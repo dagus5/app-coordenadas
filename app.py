@@ -23,7 +23,6 @@ from streamlit_folium import st_folium
 import plotly.graph_objects as go
 import srtm
 
-
 # ------------------------------------------------------------
 # CONFIGURACIÓN GENERAL
 # ------------------------------------------------------------
@@ -43,50 +42,6 @@ if "resultados" not in st.session_state:
 
 if "deltaH_state" not in st.session_state:
     st.session_state.deltaH_state = None
-
-# ------------------------------------------------------------
-# FUNCIONES – FACTOR DE AJUSTE (PER)
-# ------------------------------------------------------------
-
-def correccion_irregularidad(delta_h, freq, C):
-    """
-    Corrección por Irregularidad del Terreno (ΔF = Fcd)
-    Si Δh ≤ 50 m → ΔF = 0
-    ΔF = C - 0.03 * Δh * (1 + freq / 300)
-    """
-    if delta_h <= 0:
-        return 0.0
-    return C - 0.03 * delta_h * (1 + freq / 300.0)
-
-
-def per_kw_a_dbk(per_kw):
-    """
-    PER en kW → dBk
-    Fcp = 10 log10(kW)
-    """
-    return 10.0 * math.log10(per_kw)
-
-
-def campo_equivalente(Eu, delta_f, fcp):
-    """
-    Intensidad de Campo Utilizable Equivalente
-    Eueq = Eu + |ΔF| - Fcp
-    """
-    return Eu + abs(delta_f) - fcp
-
-
-def per_ajustada_dbk(Eu, Eueq):
-    """
-    PER ajustada en dBk
-    """
-    return Eu - Eueq
-
-
-def dbk_a_kw(dbk):
-    """
-    dBk → kW
-    """
-    return 10 ** (dbk / 10.0)
 
 # ------------------------------------------------------------
 # FUNCIONES GEO Y CONVERSIONES
@@ -330,17 +285,6 @@ RANGO_METODO = {
     "FCC (3–16 km)": "3–16",
     "0–50 km completo": "0–50",
 }
-def constante_c(servicio):
-    if servicio == "FM y Canales 2-6":
-        return 1.9
-    elif servicio == "Canales 7-13":
-        return 2.5
-    elif servicio == "Canales 14-69":
-        return 4.8
-    return None
-
-if "per_resultado" not in st.session_state:
-    st.session_state.per_resultado = None
 
 # ------------------------------------------------------------
 # MENÚ/MOSAICO DE CATEGORÍAS
@@ -350,7 +294,7 @@ st.markdown("### Selecciona una categoría")
 
 c1, c2 = st.columns(2)
 c3, c4 = st.columns(2)
-c5, c6 = st.columns(2)
+c5, _ = st.columns(2)
 
 if c1.button("📍 Cálculo - 8 Radiales"):
     st.session_state.categoria = "Cálculo - 8 Radiales"
@@ -367,10 +311,6 @@ if c4.button("🗺️ Cálculo de Distancia Central"):
 if c5.button("🌄 Δh – Rugosidad"):
     st.session_state.categoria = "Δh – Rugosidad"
 
-if c6.button("📡 Factor de Ajuste (PER)"):
-    st.session_state.categoria = "Factor de Ajuste (PER)"
-
-categoria = st.session_state.get("categoria", "")
 categoria = st.session_state.categoria
 st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
 
@@ -378,11 +318,7 @@ st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
 # COORDENADAS BASE
 # ------------------------------------------------------------
 
-if categoria != "Factor de Ajuste (PER)":
-    lat, lon = input_coords(key_prefix=f"{categoria}_base")
-else:
-    lat = lon = None
-
+lat, lon = input_coords(key_prefix=f"{categoria}_base")
 
 # ------------------------------------------------------------
 # CÁLCULOS SEGÚN CATEGORÍA
@@ -570,70 +506,6 @@ elif categoria == "Δh – Rugosidad":
             "paso": paso_m,
         }
 
-
-elif categoria == "Factor de Ajuste (PER)":
-
-    st.subheader("📡 Factor de Ajuste – Potencia Efectiva Radiada (PER)")
-
-    freq = st.number_input("Frecuencia (MHz)", min_value=1.0, value=102.3)
-    delta_h = st.number_input("Δh – Irregularidad del terreno (m)", min_value=0.0, value=100.0)
-    per_kw = st.number_input("PER ingresada (kW)", min_value=0.0001, value=26.728)
-    Eu = st.number_input("Campo nominal Eu (dBµ)", value=54.0)
-
-    st.markdown("---")
-
-    if st.button("🧮 Calcular PER ajustada"):
-
-        try:
-            # Constante C
-            if freq > 300:
-                C = 4.8
-            elif freq < 108:
-                C = 1.9
-            else:
-                C = 2.5
-
-            # Corrección ΔF
-            if delta_h <= 50:
-                delta_f = 0.0
-            else:
-                delta_f = C - 0.03 * delta_h * (1 + freq / 300.0)
-
-            # PER original
-            fcp = per_kw_a_dbk(per_kw)
-
-            # Campo equivalente
-            Eueq = Eu + abs(delta_f) - fcp
-
-            # PER ajustada
-            per_adj_dbk = Eu - Eueq
-            per_adj_kw = dbk_a_kw(per_adj_dbk)
-
-            # Guardar en session_state
-            st.session_state.per_resultado = {
-                "Frecuencia (MHz)": freq,
-                "Constante C": C,
-                "Δh (m)": delta_h,
-                "ΔF (dB)": delta_f,
-                "PER original (kW)": per_kw,
-                "Fcp (dBk)": fcp,
-                "Eu (dBµ)": Eu,
-                "Eueq (dBµ)": Eueq,
-                "PER ajustada (dBk)": per_adj_dbk,
-                "PER ajustada (kW)": per_adj_kw
-            }
-
-        except Exception as e:
-            st.error("❌ Error en el cálculo del Factor de Ajuste (PER)")
-            st.exception(e)
-
-    # -------- MOSTRAR RESULTADOS SOLO SI EXISTEN --------
-    if st.session_state.per_resultado is not None:
-        res = st.session_state.per_resultado
-        st.success(f"✅ PER ajustada = {res['PER ajustada (kW)']:.4f} kW")
-        st.dataframe(pd.DataFrame([res]), use_container_width=True)
-
-        
 # ------------------------------------------------------------
 # RESULTADOS (CUALQUIER CATEGORÍA)
 # ------------------------------------------------------------
@@ -702,3 +574,4 @@ if categoria == "Δh – Rugosidad" and st.session_state.deltaH_state:
         "text/csv"
     )
 
+ 
