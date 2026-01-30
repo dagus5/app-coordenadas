@@ -587,7 +587,7 @@ if categoria == "Δh – Rugosidad" and st.session_state.deltaH_state:
     az_sel = st.selectbox("Ver perfil:", df["Azimut (°)"])
     prof = profiles.get(az_sel)
 
-    if prof is not None:
+if prof is not None:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=prof["Distancia (km)"],
