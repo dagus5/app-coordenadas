@@ -21,7 +21,6 @@ from pygeodesy.ellipsoidalVincenty import LatLon
 import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
-import srtm
 
 # ------------------------------------------------------------
 # CONFIGURACIÓN GENERAL
