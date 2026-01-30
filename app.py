@@ -4,7 +4,7 @@
 # - 8 radiales, cálculo por azimut, distancia, distancia central
 # - Δh con metodología tipo ITM/FCC/MSAM: percentiles 90 y 10 → Δh = h90 – h10
 # - Tramo 0–50 km, paso editable
-# - SRTM (srtm.py) + Open-Meteo como respaldo
+# - Open-Meteo como fuente de datos de elevación
 # - Conversión Decimal ↔ GMS
 # - Mapas y perfiles interactivos
 
@@ -149,17 +149,8 @@ def input_coords(key_prefix="base"):
         return input_gms(key_prefix)
 
 # ------------------------------------------------------------
-# ELEVACIONES (SRTM + FALLBACK OPEN-METEO)
+# ELEVACIONES (Open-Meteo)
 # ------------------------------------------------------------
-
-@st.cache_resource
-def get_srtm_data():
-    return srtm.get_data()
-
-def elev_srtm(lats, lons):
-    data = get_srtm_data()
-    vals = [data.get_elevation(la,lo) for la,lo in zip(lats,lons)]
-    return vals
 
 class Elev429(Exception):
     pass
@@ -188,15 +179,13 @@ def elev_open_meteo(lats, lons):
     return [float(v) if v is not None else None for v in out]
 
 def get_elevations(lats, lons):
-    elev = elev_srtm(lats, lons)
-    if any(v is None for v in elev):
-        try:
-            elev2 = elev_open_meteo(lats, lons)
-            for i, v in enumerate(elev):
-                if v is None:
-                    elev[i] = elev2[i]
-        except:
-            pass
+    # Usar solo Open-Meteo
+    try:
+        elev = elev_open_meteo(lats, lons)
+    except Exception as e:
+        st.error(f"Error al obtener elevaciones de Open-Meteo: {e}")
+        elev = [None] * len(lats)
+
     return elev
 
 # ------------------------------------------------------------
@@ -238,7 +227,7 @@ def build_profile(lat, lon, az, step_m):
     return dists, lats, lons
 
 # ------------------------------------------------------------
-# METODOLOGÍA PARA Δh (HÍBRIDA ITM/FCC/MSAM + PERSONALIZADO)
+# METODOLOGÍA PARA Δh (ITM/FCC/MSAM + PERSONALIZADO)
 # ------------------------------------------------------------
 
 def compute_delta_h(dists_m, elev_list, metodo, d_min_custom=None, d_max_custom=None):
@@ -606,10 +595,11 @@ if categoria == "Δh – Rugosidad" and st.session_state.deltaH_state:
             mode="lines",
             name=f"Perfil {az_sel}°"
         ))
-        fig.add_hline(y=prof["Elevación (m)"].quantile(0.9), line_dash="dash", line_color="red",
-                     annotation_text=f"h90: {prof['Elevación (m)'].quantile(0.9):.2f} m")
-        fig.add_hline(y=prof["Elevación (m)"].quantile(0.1), line_dash="dash", line_color="green",
-                     annotation_text=f"h10: {prof['Elevación (m)'].quantile(0.1):.2f} m")
+        if not prof["Elevación (m)"].isnull().all():
+            fig.add_hline(y=prof["Elevación (m)"].quantile(0.9), line_dash="dash", line_color="red",
+                         annotation_text=f"h90: {prof['Elevación (m)"].quantile(0.9):.2f} m")
+            fig.add_hline(y=prof["Elevación (m)"].quantile(0.1), line_dash="dash", line_color="green",
+                         annotation_text=f"h10: {prof['Elevación (m)"].quantile(0.1):.2f} m")
         fig.update_layout(
             title=f"Perfil de Terreno — Azimut {az_sel}° (0–50 km)",
             xaxis_title="Distancia (km)",
