@@ -597,9 +597,9 @@ if categoria == "Δh – Rugosidad" and st.session_state.deltaH_state:
         ))
         if not prof["Elevación (m)"].isnull().all():
             fig.add_hline(y=prof["Elevación (m)"].quantile(0.9), line_dash="dash", line_color="red",
-                         annotation_text=f"h90: {prof['Elevación (m)"].quantile(0.9):.2f} m")
+                         annotation_text=f"h90: {prof['Elevación (m)"].quantile(0.9):.2f} m"
             fig.add_hline(y=prof["Elevación (m)"].quantile(0.1), line_dash="dash", line_color="green",
-                         annotation_text=f"h10: {prof['Elevación (m)"].quantile(0.1):.2f} m")
+                         annotation_text=f"h10: {prof['Elevación (m)"].quantile(0.1):.2f} m"
         fig.update_layout(
             title=f"Perfil de Terreno — Azimut {az_sel}° (0–50 km)",
             xaxis_title="Distancia (km)",
