@@ -2,8 +2,7 @@
 # app.py — Coordenadas + Δh (ITM/FCC/MSAM) 0–50 km
 # Incluye:
 # - 8 radiales, cálculo por azimut, distancia, distancia central
-# - Δh con metodología tipo ITM/FCC/MSAM:
-#   ordenar elevaciones → percentiles 10 y 90 → Δh = h90 – h10
+# - Δh con metodología tipo ITM/FCC/MSAM: percentiles 90 y 10 → Δh = h90 – h10
 # - Tramo 0–50 km, paso editable
 # - SRTM (srtm.py) + Open-Meteo como respaldo
 # - Conversión Decimal ↔ GMS
@@ -244,14 +243,9 @@ def build_profile(lat, lon, az, step_m):
 
 def compute_delta_h(dists_m, elev_list, metodo, d_min_custom=None, d_max_custom=None):
     """
-    Cálculo híbrido de Δh:
-    - ITM / MSAM: 10–50 km
-    - FCC: 3–16 km
-    - 0–50 km completo: todo el perfil
-    - Personalizado (km): rango definido por el usuario
-    Δh = h90 – h10 (percentiles 90 y 10 de la elevación).
+    Cálculo de Δh según ITM/MSAM:
+    - Δh = h90 - h10 (percentiles 90 y 10 de la elevación).
     """
-
     if metodo == "ITM / MSAM (10–50 km)":
         d_min, d_max = 10000, 50000
     elif metodo == "FCC (3–16 km)":
@@ -263,7 +257,7 @@ def compute_delta_h(dists_m, elev_list, metodo, d_min_custom=None, d_max_custom=
     else:
         d_min, d_max = 0, max(dists_m) if len(dists_m) > 0 else 0
 
-    # Filtrar por rango de distancias y descartar None
+    # Filtrar elevaciones en el rango de distancias
     elev_filtradas = [
         e for d, e in zip(dists_m, elev_list)
         if e is not None and d_min <= d <= d_max
@@ -272,10 +266,11 @@ def compute_delta_h(dists_m, elev_list, metodo, d_min_custom=None, d_max_custom=
     if len(elev_filtradas) == 0:
         return None, None, None
 
-    arr = np.sort(np.array(elev_filtradas, dtype=float))
-    h10 = float(np.percentile(arr, 10))
-    h90 = float(np.percentile(arr, 90))
-    delta_h = h90 - h10  # P90 – P10
+    # Ordenar y calcular percentiles
+    elev_filtradas = np.array(elev_filtradas)
+    h10 = float(np.percentile(elev_filtradas, 10))  # Percentil 10 (90% del terreno está por debajo)
+    h90 = float(np.percentile(elev_filtradas, 90))  # Percentil 90 (10% del terreno está por debajo)
+    delta_h = h90 - h10  # Δh = h90 - h10 (según ITM)
 
     return delta_h, h10, h90
 
@@ -340,7 +335,6 @@ if c5.button("🌄 Δh – Rugosidad"):
 
 if c6.button("📡 Factor de Ajuste (PER)"):
     st.session_state.categoria = "Factor de Ajuste (PER)"
-
 
 categoria = st.session_state.categoria
 st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
@@ -536,12 +530,12 @@ elif categoria == "Δh – Rugosidad":
             "profiles": profiles_dict,
             "paso": paso_m,
         }
+
 # ------------------------------------------------------------
 # FACTOR DE AJUSTE (PER)
 # ------------------------------------------------------------
 
 elif categoria == "Factor de Ajuste (PER)":
-
     st.subheader("Factor de Ajuste — Potencia Efectiva Radiada")
 
     freq = st.number_input("Frecuencia (MHz)", value=100.0, min_value=1.0)
@@ -550,7 +544,6 @@ elif categoria == "Factor de Ajuste (PER)":
     Eu = st.number_input("Eu — Intensidad de Campo Nominal (dBu)", value=60.0)
 
     if st.button("Calcular PER ajustada"):
-
         C = constante_c_freq(freq)
         delta_f = correccion_irregularidad(delta_h, freq, C)
         fcp = per_kw_a_dbk(per_kw)
@@ -613,6 +606,10 @@ if categoria == "Δh – Rugosidad" and st.session_state.deltaH_state:
             mode="lines",
             name=f"Perfil {az_sel}°"
         ))
+        fig.add_hline(y=prof["Elevación (m)"].quantile(0.9), line_dash="dash", line_color="red",
+                     annotation_text=f"h90: {prof['Elevación (m)'].quantile(0.9):.2f} m")
+        fig.add_hline(y=prof["Elevación (m)"].quantile(0.1), line_dash="dash", line_color="green",
+                     annotation_text=f"h10: {prof['Elevación (m)'].quantile(0.1):.2f} m")
         fig.update_layout(
             title=f"Perfil de Terreno — Azimut {az_sel}° (0–50 km)",
             xaxis_title="Distancia (km)",
@@ -640,5 +637,3 @@ if categoria == "Δh – Rugosidad" and st.session_state.deltaH_state:
         "DeltaH_resultados.csv",
         "text/csv"
     )
-
- 
