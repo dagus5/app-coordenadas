@@ -6,6 +6,3 @@ folium
 streamlit-folium
 openpyxl
 plotly
-srtm.py
-rasterio
-pyitm3
