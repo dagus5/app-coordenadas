@@ -519,31 +519,41 @@ elif categoria == "Δh – Rugosidad":
             d_min_custom_m = d_min_km * 1000.0
             d_max_custom_m = d_max_km * 1000.0
 
-        for i, az in enumerate(az_list, start=1):
-            dists, lats, lons = build_profile(lat, lon, az, paso_m)
-            elev = get_elevations(lats, lons)
+# Define RANGO_METODO antes del bucle
+RANGO_METODO = {
+    "ITM / MSAM (PTP)": "PTP",
+    "ITM / MSAM (10–50 km)": "10–50 km",
+    "FCC (3–16 km)": "3–16 km",
+    "0–50 km completo": "0–50 km",
+}
 
-            dh, h10, h90 = compute_delta_h(
-                dists,
-                elev,
-                metodo_dh,
-                d_min_custom=d_min_custom_m,
-                d_max_custom=d_max_custom_m
-            )
+for i, az in enumerate(az_list, start=1):
+    dists, lats, lons = build_profile(lat, lon, az, paso_m)
+    elev = get_elevations(lats, lons)
 
-if metodo_dh == "Personalizado (km)":
-                rango_txt = f"{d_min_km:.2f}–{d_max_km:.2f}"
-            else:
-                rango_txt = RANGO_METODO.get(metodo_dh, "")
+    dh, h10, h90 = compute_delta_h(
+        dists,
+        elev,
+        metodo_dh,
+        d_min_custom=d_min_custom_m,
+        d_max_custom=d_max_custom_m
+    )
 
-            results.append({
-                "Azimut (°)": az,
-                "Δh (m)": dh,
-                "h10 (P10, m)": h10,
-                "h90 (P90, m)": h90,
-                "Método Δh": metodo_dh,
-                "Rango (km)": rango_txt
-            })
+    # Determinar el texto del rango
+    if metodo_dh == "Personalizado (km)":
+        rango_txt = f"{d_min_km:.2f}–{d_max_km:.2f}"
+    else:
+        rango_txt = RANGO_METODO.get(metodo_dh, "")
+
+    # Añadir resultados
+    results.append({
+        "Azimut (°)": az,
+        "Δh (m)": dh,
+        "h10 (P10, m)": h10,
+        "h90 (P90, m)": h90,
+        "Método Δh": metodo_dh,
+        "Rango (km)": rango_txt
+    })
 
             df_prof = pd.DataFrame({
                 "Distancia (km)": [d/1000 for d in dists],
