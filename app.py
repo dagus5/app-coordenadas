@@ -215,6 +215,40 @@ def calcular_distancia_azimut(lat1, lon1, lat2, lon2):
     az12 = p1.initialBearingTo(p2)
     az21 = p2.initialBearingTo(p1)
     return dkm, az12, az21
+# ------------------------------------------------------------
+# ITM / MSAM – Δh PTP (perfil detrendido + RMS)
+# ------------------------------------------------------------
+
+def detrend_profile(dists_m, elev):
+    x = np.array(dists_m, dtype=float)
+    y = np.array(elev, dtype=float)
+
+    mask = ~np.isnan(y)
+    x = x[mask]
+    y = y[mask]
+
+    if len(x) < 5:
+        return None
+
+    coef = np.polyfit(x, y, 1)
+    trend = coef[0] * x + coef[1]
+    return y - trend
+
+
+def smooth_residuals(residuals, window=7):
+    if residuals is None or len(residuals) < window:
+        return residuals
+    kernel = np.ones(window) / window
+    return np.convolve(residuals, kernel, mode="same")
+
+
+def delta_h_itm_ptp(dists_m, elev):
+    residuals = detrend_profile(dists_m, elev)
+    if residuals is None:
+        return None
+
+    residuals = smooth_residuals(residuals, window=7)
+    return float(np.sqrt(np.mean(residuals ** 2)))
 
 def build_profile(lat, lon, az, step_m):
     # Perfil desde 0 hasta 50 km (0–50000 m)
@@ -230,44 +264,46 @@ def build_profile(lat, lon, az, step_m):
 # METODOLOGÍA PARA Δh (ITM/FCC/MSAM + PERSONALIZADO)
 # ------------------------------------------------------------
 
-def compute_delta_h(dists_m, elev_list, metodo, d_min_custom=None, d_max_custom=None):
+def compute_delta_h(dists_m, elev_list, metodo,
+                    d_min_custom=None, d_max_custom=None):
     """
-    Cálculo de Δh según ITM/MSAM:
-    - Δh = h90 - h10 (percentiles 90 y 10 de la elevación).
+    Cálculo de Δh:
+    - ITM / MSAM (PTP): RMS del perfil detrendido (tipo MSAM)
+    - FCC / AREA: percentiles (compatibilidad)
     """
-    if metodo == "ITM / MSAM (10–50 km)":
-        d_min, d_max = 10000, 50000
-    elif metodo == "FCC (3–16 km)":
+
+    elev = np.array(elev_list, dtype=float)
+
+    # ---------- ITM / MSAM PTP ----------
+    if metodo == "ITM / MSAM (PTP)":
+        dh = delta_h_itm_ptp(dists_m, elev)
+        return dh, None, None
+
+    # ---------- MÉTODOS POR PERCENTILES ----------
+    if metodo == "FCC (3–16 km)":
         d_min, d_max = 3000, 16000
     elif metodo == "0–50 km completo":
         d_min, d_max = 0, 50000
-    elif metodo == "Personalizado (km)" and d_min_custom is not None and d_max_custom is not None:
+    elif metodo == "Personalizado (km)" and d_min_custom is not None:
         d_min, d_max = d_min_custom, d_max_custom
     else:
-        d_min, d_max = 0, max(dists_m) if len(dists_m) > 0 else 0
+        d_min, d_max = 10000, 50000  # ITM AREA clásico
 
-    # Filtrar elevaciones en el rango de distancias
     elev_filtradas = [
-        e for d, e in zip(dists_m, elev_list)
-        if e is not None and d_min <= d <= d_max
+        e for d, e in zip(dists_m, elev)
+        if not np.isnan(e) and d_min <= d <= d_max
     ]
 
-    if len(elev_filtradas) == 0:
+    if len(elev_filtradas) < 5:
         return None, None, None
 
-    # Ordenar y calcular percentiles
     elev_filtradas = np.array(elev_filtradas)
-    h10 = float(np.percentile(elev_filtradas, 10))  # Percentil 10 (90% del terreno está por debajo)
-    h90 = float(np.percentile(elev_filtradas, 90))  # Percentil 90 (10% del terreno está por debajo)
-    delta_h = h90 - h10  # Δh = h90 - h10 (según ITM)
+    h10 = float(np.percentile(elev_filtradas, 10))
+    h90 = float(np.percentile(elev_filtradas, 90))
+    delta_h = h90 - h10
 
     return delta_h, h10, h90
 
-RANGO_METODO = {
-    "ITM / MSAM (10–50 km)": "10–50",
-    "FCC (3–16 km)": "3–16",
-    "0–50 km completo": "0–50",
-}
 # ------------------------------------------------------------
 # FACTOR DE AJUSTE (PER)
 # ------------------------------------------------------------
@@ -425,12 +461,16 @@ elif categoria == "Δh – Rugosidad":
     )
 
     metodo_dh = st.selectbox(
-        "Método de cálculo de Δh",
-        ["ITM / MSAM (10–50 km)",
-         "FCC (3–16 km)",
-         "0–50 km completo",
-         "Personalizado (km)"],
-        index=0,
+    "Método de cálculo de Δh",
+    [
+        "ITM / MSAM (PTP)",
+        "ITM / MSAM (10–50 km)",
+        "FCC (3–16 km)",
+        "0–50 km completo",
+        "Personalizado (km)"
+    ],
+    index=0,
+
         help="Selecciona el rango de distancias sobre el que se calcula la rugosidad."
     )
 
