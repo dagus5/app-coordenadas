@@ -496,70 +496,70 @@ elif categoria == "Δh – Rugosidad":
         if d_max_km <= d_min_km:
             st.warning("La distancia máxima debe ser mayor que la mínima.")
 
-    if st.button("Calcular Δh", key="calcdh"):
-        try:
-            az_list = [float(a.strip()) for a in az_txt.split(",") if a.strip() != ""]
-        except:
-            st.error("Revisa la lista de azimuts.")
-            st.stop()
+if st.button("Calcular Δh", key="calcdh"):
+    try:
+        az_list = [float(a.strip()) for a in az_txt.split(",") if a.strip() != ""]
+    except:
+        st.error("Revisa la lista de azimuts.")
+        st.stop()
 
-        if metodo_dh == "Personalizado (km)" and (d_min_km is None or d_max_km is None or d_max_km <= d_min_km):
-            st.error("Revisa el rango personalizado de distancias (km).")
-            st.stop()
+    if metodo_dh == "Personalizado (km)" and (d_min_km is None or d_max_km is None or d_max_km <= d_min_km):
+        st.error("Revisa el rango personalizado de distancias (km).")
+        st.stop()
 
-        results = []
-        profiles_dict = {}
+    results = []
+    profiles_dict = {}
 
-        pb = st.progress(0)
-        total = len(az_list)
+    pb = st.progress(0)
+    total = len(az_list)
 
-        # Preconvertir rango personalizado a metros
-        d_min_custom_m = d_max_custom_m = None
-        if metodo_dh == "Personalizado (km)":
-            d_min_custom_m = d_min_km * 1000.0
-            d_max_custom_m = d_max_km * 1000.0
-
-# Define RANGO_METODO antes del bucle
-RANGO_METODO = {
-    "ITM / MSAM (PTP)": "PTP",
-    "ITM / MSAM (10–50 km)": "10–50 km",
-    "FCC (3–16 km)": "3–16 km",
-    "0–50 km completo": "0–50 km",
-}
-
-for i, az in enumerate(az_list, start=1):
-    dists, lats, lons = build_profile(lat, lon, az, paso_m)
-    elev = get_elevations(lats, lons)
-
-    dh, h10, h90 = compute_delta_h(
-        dists,
-        elev,
-        metodo_dh,
-        d_min_custom=d_min_custom_m,
-        d_max_custom=d_max_custom_m
-    )
-
+    # Preconvertir rango personalizado a metros
+    d_min_custom_m = d_max_custom_m = None
     if metodo_dh == "Personalizado (km)":
-        rango_txt = f"{d_min_km:.2f}–{d_max_km:.2f}"
-    else:
-        rango_txt = RANGO_METODO.get(metodo_dh, "")
+        d_min_custom_m = d_min_km * 1000.0
+        d_max_custom_m = d_max_km * 1000.0
 
-    results.append({
-        "Azimut (°)": az,
-        "Δh (m)": dh,
-        "h10 (P10, m)": h10,
-        "h90 (P90, m)": h90,
-        "Método Δh": metodo_dh,
-        "Rango (km)": rango_txt
-    })
+    # Define RANGO_METODO antes del bucle
+    RANGO_METODO = {
+        "ITM / MSAM (PTP)": "PTP",
+        "ITM / MSAM (10–50 km)": "10–50 km",
+        "FCC (3–16 km)": "3–16 km",
+        "0–50 km completo": "0–50 km",
+    }
 
-    # Crear DataFrame del perfil y guardarlo en el diccionario
-    df_prof = pd.DataFrame({
-        "Distancia (km)": [d/1000 for d in dists],
-        "Elevación (m)": elev
-    })
-    profiles_dict[az] = df_prof
-    pb.progress(int(i*100/total))
+    for i, az in enumerate(az_list, start=1):
+        dists, lats, lons = build_profile(lat, lon, az, paso_m)
+        elev = get_elevations(lats, lons)
+
+        dh, h10, h90 = compute_delta_h(
+            dists,
+            elev,
+            metodo_dh,
+            d_min_custom=d_min_custom_m,
+            d_max_custom=d_max_custom_m
+        )
+
+        if metodo_dh == "Personalizado (km)":
+            rango_txt = f"{d_min_km:.2f}–{d_max_km:.2f}"
+        else:
+            rango_txt = RANGO_METODO.get(metodo_dh, "")
+
+        results.append({
+            "Azimut (°)": az,
+            "Δh (m)": dh,
+            "h10 (P10, m)": h10,
+            "h90 (P90, m)": h90,
+            "Método Δh": metodo_dh,
+            "Rango (km)": rango_txt
+        })
+
+        # Crear DataFrame del perfil y guardarlo en el diccionario
+        df_prof = pd.DataFrame({
+            "Distancia (km)": [d/1000 for d in dists],
+            "Elevación (m)": elev
+        })
+        profiles_dict[az] = df_prof
+        pb.progress(int(i*100/total))
 
     df = pd.DataFrame(results).sort_values("Azimut (°)")
 
@@ -567,6 +567,8 @@ for i, az in enumerate(az_list, start=1):
         "df": df,
         "profiles": profiles_dict,
         "paso": paso_m,
+    }
+
     }
 
 
