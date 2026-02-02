@@ -539,13 +539,11 @@ for i, az in enumerate(az_list, start=1):
         d_max_custom=d_max_custom_m
     )
 
-    # Determinar el texto del rango
     if metodo_dh == "Personalizado (km)":
         rango_txt = f"{d_min_km:.2f}–{d_max_km:.2f}"
     else:
         rango_txt = RANGO_METODO.get(metodo_dh, "")
 
-    # Añadir resultados
     results.append({
         "Azimut (°)": az,
         "Δh (m)": dh,
@@ -555,12 +553,14 @@ for i, az in enumerate(az_list, start=1):
         "Rango (km)": rango_txt
     })
 
-df_prof = pd.DataFrame({
-                "Distancia (km)": [d/1000 for d in dists],
-                "Elevación (m)": elev
-            })
-            profiles_dict[az] = df_prof
-            pb.progress(int(i*100/total))
+    # Crear DataFrame del perfil y guardarlo en el diccionario
+    df_prof = pd.DataFrame({
+        "Distancia (km)": [d/1000 for d in dists],
+        "Elevación (m)": elev
+    })
+    profiles_dict[az] = df_prof
+    pb.progress(int(i*100/total))
+
 
         df = pd.DataFrame(results).sort_values("Azimut (°)")
 
