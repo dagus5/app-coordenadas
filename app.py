@@ -555,7 +555,7 @@ for i, az in enumerate(az_list, start=1):
         "Rango (km)": rango_txt
     })
 
-            df_prof = pd.DataFrame({
+df_prof = pd.DataFrame({
                 "Distancia (km)": [d/1000 for d in dists],
                 "Elevación (m)": elev
             })
