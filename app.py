@@ -289,45 +289,54 @@ def build_profile(lat, lon, az, step_m):
 # METODOLOGÍA PARA Δh (ITM/FCC/MSAM + PERSONALIZADO)
 # ------------------------------------------------------------
 
-def compute_delta_h(dists_m, elev_list, metodo,
-                    d_min_custom=None, d_max_custom=None):
+def compute_delta_h(dists_m, elev_list, metodo, d_min_custom=None, d_max_custom=None):
     """
-    Cálculo de Δh:
-    - ITM / MSAM (PTP): RMS del perfil detrendido (tipo MSAM)
-    - FCC / AREA: percentiles (compatibilidad)
+    Cálculo de Δh estilo ITM / MSAM (PTP):
+    - Perfil 10–50 km (default)
+    - Eliminación de pendiente (detrending)
+    - Δh = P90 - P10 sobre residuos del terreno
     """
 
-    elev = np.array(elev_list, dtype=float)
-
-    # ---------- ITM / MSAM PTP ----------
-    if metodo == "ITM / MSAM (PTP)":
-        dh = delta_h_itm_ptp(dists_m, elev)
-        return dh, None, None
-
-    # ---------- MÉTODOS POR PERCENTILES ----------
-    if metodo == "FCC (3–16 km)":
+    # ---------------- RANGO ----------------
+    if metodo == "ITM / MSAM (10–50 km)":
+        d_min, d_max = 10000, 50000
+    elif metodo == "FCC (3–16 km)":
         d_min, d_max = 3000, 16000
     elif metodo == "0–50 km completo":
         d_min, d_max = 0, 50000
-    elif metodo == "Personalizado (km)" and d_min_custom is not None:
+    elif metodo == "Personalizado (km)" and d_min_custom and d_max_custom:
         d_min, d_max = d_min_custom, d_max_custom
     else:
-        d_min, d_max = 10000, 50000  # ITM AREA clásico
-
-    elev_filtradas = [
-        e for d, e in zip(dists_m, elev)
-        if not np.isnan(e) and d_min <= d <= d_max
-    ]
-
-    if len(elev_filtradas) < 5:
         return None, None, None
 
-    elev_filtradas = np.array(elev_filtradas)
-    h10 = float(np.percentile(elev_filtradas, 10))
-    h90 = float(np.percentile(elev_filtradas, 90))
+    # ---------------- FILTRADO ----------------
+    data = [
+        (d, h) for d, h in zip(dists_m, elev_list)
+        if h is not None and d_min <= d <= d_max
+    ]
+
+    if len(data) < 10:
+        return None, None, None
+
+    d = np.array([x[0] for x in data], dtype=float)
+    h = np.array([x[1] for x in data], dtype=float)
+
+    # ---------------- DETRENDING (CLAVE) ----------------
+    # Ajuste lineal h = a·d + b
+    A = np.vstack([d, np.ones(len(d))]).T
+    a, b = np.linalg.lstsq(A, h, rcond=None)[0]
+
+    # Residuos del terreno
+    h_res = h - (a * d + b)
+
+    # ---------------- ESTADÍSTICA MSAM ----------------
+    h10 = np.percentile(h_res, 10)
+    h90 = np.percentile(h_res, 90)
+
     delta_h = h90 - h10
 
-    return delta_h, h10, h90
+    return float(delta_h), float(h10), float(h90)
+
 
 # ------------------------------------------------------------
 # FACTOR DE AJUSTE (PER)
