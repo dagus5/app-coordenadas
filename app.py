@@ -569,8 +569,6 @@ if st.button("Calcular Δh", key="calcdh"):
         "paso": paso_m,
     }
 
-    }
-
 
 # ------------------------------------------------------------
 # FACTOR DE AJUSTE (PER)
