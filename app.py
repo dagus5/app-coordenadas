@@ -178,15 +178,19 @@ def elev_open_meteo(lats, lons):
         time.sleep(0.2)
     return [float(v) if v is not None else None for v in out]
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def get_elevations_cached(lats, lons):
+    elev = elev_open_meteo(lats, lons)
+    return tuple(elev)  # cache necesita tipos inmutables
+
+
 def get_elevations(lats, lons):
-    # Usar solo Open-Meteo
     try:
-        elev = elev_open_meteo(lats, lons)
+        return list(get_elevations_cached(tuple(lats), tuple(lons)))
     except Exception as e:
         st.error(f"Error al obtener elevaciones de Open-Meteo: {e}")
-        elev = [None] * len(lats)
+        return [None] * len(lats)
 
-    return elev
 
 # ------------------------------------------------------------
 # UTILIDADES DE COORDENADAS
