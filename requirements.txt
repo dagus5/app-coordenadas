@@ -1,8 +1,9 @@
 streamlit
-pandas
 numpy
+pandas
+rasterio
+pyproj
 pygeodesy
 folium
 streamlit-folium
-openpyxl
 plotly
