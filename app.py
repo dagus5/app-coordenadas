@@ -351,6 +351,10 @@ st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
 
 lat, lon = input_coords(key_prefix=f"{categoria}_base")
 
+# Forzar latitud positiva
+lat = abs(lat)
+
+
 # ------------------------------------------------------------
 # CÁLCULOS SEGÚN CATEGORÍA
 # ------------------------------------------------------------
