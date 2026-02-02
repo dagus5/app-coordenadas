@@ -531,7 +531,7 @@ elif categoria == "Δh – Rugosidad":
                 d_max_custom=d_max_custom_m
             )
 
-        if metodo_dh == "Personalizado (km)":
+if metodo_dh == "Personalizado (km)":
                 rango_txt = f"{d_min_km:.2f}–{d_max_km:.2f}"
             else:
                 rango_txt = RANGO_METODO.get(metodo_dh, "")
