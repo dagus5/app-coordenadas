@@ -561,14 +561,14 @@ for i, az in enumerate(az_list, start=1):
     profiles_dict[az] = df_prof
     pb.progress(int(i*100/total))
 
+    df = pd.DataFrame(results).sort_values("Azimut (°)")
 
-        df = pd.DataFrame(results).sort_values("Azimut (°)")
+    st.session_state.deltaH_state = {
+        "df": df,
+        "profiles": profiles_dict,
+        "paso": paso_m,
+    }
 
-        st.session_state.deltaH_state = {
-            "df": df,
-            "profiles": profiles_dict,
-            "paso": paso_m,
-        }
 
 # ------------------------------------------------------------
 # FACTOR DE AJUSTE (PER)
