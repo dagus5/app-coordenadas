@@ -247,12 +247,33 @@ def smooth_residuals(residuals, window=7):
 
 
 def delta_h_itm_ptp(dists_m, elev):
-    residuals = detrend_profile(dists_m, elev)
-    if residuals is None:
+    dists = np.array(dists_m, dtype=float)
+    elev = np.array(elev, dtype=float)
+
+    # Ignorar primeros/últimos 1 km
+    mask = (dists >= 1000) & (dists <= dists[-1] - 1000)
+    dists = dists[mask]
+    elev = elev[mask]
+
+    if len(elev) < 10:
         return None
 
-    residuals = smooth_residuals(residuals, window=7)
-    return float(np.sqrt(np.mean(residuals ** 2)))
+    # Detrend
+    coef = np.polyfit(dists, elev, 1)
+    trend = coef[0] * dists + coef[1]
+    residuals = elev - trend
+
+    # Suavizado MSAM-like
+    residuals = smooth_residuals(residuals, dists[-1])
+
+    # Clipping
+    sigma = np.std(residuals)
+    residuals = np.clip(residuals, -3*sigma, 3*sigma)
+
+    # RMS + normalización
+    raw_rms = np.sqrt(np.mean(residuals ** 2))
+    return float(raw_rms * 0.65)
+
 
 def build_profile(lat, lon, az, step_m):
     # Perfil desde 0 hasta 50 km (0–50000 m)
