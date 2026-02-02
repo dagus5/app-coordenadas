@@ -131,7 +131,7 @@ def input_gms(key_prefix):
     lat = gms_a_decimal(g1, m1, s1, d1c, "lat")
     lon = gms_a_decimal(g2, m2, s2, d2c, "lon")
 
-    st.caption(f"↔ Decimal: {lat:.10f}, {lon:.10f}")
+    st.caption(f"↔ Decimal: {lat:.10f}, {abs(lon):.10f}")
     return lat, lon
 
 # ---------------- SELECCIÓN FORMATO ----------------
@@ -213,8 +213,8 @@ def calcular_puntos(lat, lon, acimuts, distancias_m):
             out.append({
                 "Distancia (km)": d/1000,
                 "Acimut (°)": az,
-                "Latitud Final": f"{p.lat:.10f}",
-                "Longitud Final": f"{p.lon:.10f}",
+               "Latitud Final": f"{p.lat:.10f}",
+                "Longitud Final": f"{abs(p.lon):.10f}",
                 "Lat (GMS)": decimal_a_gms(p.lat, "lat"),
                 "Lon (GMS)": decimal_a_gms(p.lon, "lon")
             })
@@ -352,7 +352,7 @@ st.markdown(f"### 🟢 Categoría seleccionada: **{categoria}**")
 lat, lon = input_coords(key_prefix=f"{categoria}_base")
 
 # Forzar latitud positiva
-lat = abs(lat)
+lon = abs(lon)
 
 
 # ------------------------------------------------------------
