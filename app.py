@@ -15,6 +15,7 @@ import numpy as np
 import math
 import time
 import requests
+import srtm
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 
 from pygeodesy.ellipsoidalVincenty import LatLon
